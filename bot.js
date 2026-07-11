@@ -16,9 +16,9 @@ if (!token) process.exit(1);
 let lastUpdateId = 0;
 const estadoUsuarios = {}; // Memoria temporal del bot
 
-// Función mejorada y segura para enviar datos a tu Google Sheet
-function guardarEnSheets(alimento, segmento, usuario) {
-  const data = JSON.stringify({ alimento: alimento, segmento: segmento, usuario: usuario });
+// Función de comunicación robusta con Google Sheets
+function comunicacionSheets(payload, callback) {
+  const data = JSON.stringify(payload);
   const urlObj = new URL(URL_SHEET);
   const options = {
     hostname: urlObj.hostname,
@@ -28,14 +28,15 @@ function guardarEnSheets(alimento, segmento, usuario) {
   };
   
   const req = https.request(options, (res) => {
-    // Escuchamos la respuesta de Google para evitar que la petición se quede colgada
     let body = '';
     res.on('data', chunk => body += chunk);
-    res.on('end', () => { /* Datos procesados con éxito */ });
+    res.on('end', () => {
+      if (callback) callback(body);
+    });
   });
 
   req.on('error', (e) => {
-    console.error("Error guardando en Sheets: ", e);
+    console.error("Error en comunicación con Sheets: ", e);
   });
 
   req.write(data);
@@ -84,9 +85,9 @@ function manejarMensaje(message) {
     
     const botones = {
       inline_keyboard: [
-        [{ text: "A: Listo (0-48h)", callback_data: "A" }, { text: "B: Planificado (2-5 días)", callback_data: "B" }],
-        [{ text: "C: Transformable", callback_data: "C" }, { text: "D: Estabilizado (>5 días)", callback_data: "D" }],
-        [{ text: "E: Revalorizado (Circular)", callback_data: "E" }]
+        [{ text: "A: Listo (0-48h)", callback_data: "seg_A" }, { text: "B: Planificado (2-5 días)", callback_data: "seg_B" }],
+        [{ text: "C: Transformable", callback_data: "seg_C" }, { text: "D: Estabilizado (>5 días)", callback_data: "seg_D" }],
+        [{ text: "E: Revalorizado (Circular)", callback_data: "seg_E" }]
       ]
     };
     
@@ -102,28 +103,51 @@ function manejarBoton(callbackQuery) {
   const messageId = callbackQuery.message.message_id;
   const username = callbackQuery.from.username || "Usuario";
   
-  let titulo = "";
-  let feedback = "";
-  
-  switch(data) {
-    case 'A': titulo = "Segmento A (Uso Inmediato)"; feedback = "Tienes de 0 a 48 horas. El reloj corre. Cómetelo ya."; break;
-    case 'B': titulo = "Segmento B (Consumo Diferido)"; feedback = "Tienes de 2 a 5 días. Estará planificado, pero no te olvides de él."; break;
-    case 'C': titulo = "Segmento C (Procesamiento)"; feedback = "Tiempo variable. Hora de procesar y cocinar. Haz algo útil con él."; break;
-    case 'D': titulo = "Segmento D (Conservación Extendida)"; feedback = "Más de 5 días de margen. Seguro y estabilizado, pero no te confíes ni lo dejes fosilizar."; break;
-    case 'E': titulo = "Segmento E (Subproducto Útil)"; feedback = "Ciclo circular activado. Este subproducto aún tiene guerra que dar."; break;
+  // 1. Gestión de clasificación inicial de segmentos
+  if (data.startsWith("seg_")) {
+    let letraSegmento = data.split("_")[1];
+    let titulo = "";
+    let feedback = "";
+    
+    switch(letraSegmento) {
+      case 'A': titulo = "Segmento A (Uso Inmediato)"; feedback = "Tienes de 0 a 48 horas. El reloj corre. Cómetelo ya."; break;
+      case 'B': titulo = "Segmento B (Consumo Diferido)"; feedback = "Tienes de 2 a 5 días. Estará planificado, pero no te olvides de él."; break;
+      case 'C': titulo = "Segmento C (Procesamiento)"; feedback = "Tiempo variable. Hora de procesar y cocinar. Haz algo útil con él."; break;
+      case 'D': titulo = "Segmento D (Conservación Extendida)"; feedback = "Más de 5 días de margen. Seguro y estabilizado, pero no te confíes ni lo dejes fosilizar."; break;
+      case 'E': titulo = "Segmento E (Subproducto Útil)"; feedback = "Ciclo circular activado. Este subproducto aún tiene guerra que dar."; break;
+    }
+
+    const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Este alimento';
+    
+    // Guardamos en Sheets con la acción "registrar"
+    comunicacionSheets({ action: "registrar", alimento: alimento, segmento: titulo, usuario: username });
+
+    // Ofrecemos botones inmediatos para interactuar o cerrar el ciclo en el futuro
+    const textoFinal = `✅ *${alimento}* ha sido enjaulado en el *${titulo}*.\n\n⚠️ ${feedback}\n\n¿Qué has hecho finalmente con él?`;
+    
+    const botonesGestion = {
+      inline_keyboard: [
+        [{ text: "😋 Ya me lo he comido", callback_data: `act_Consumido_${alimento}` }],
+        [{ text: "♻️ Lo he transformado", callback_data: `act_Optimizado_${alimento}` }]
+      ]
+    };
+
+    editarMensajeConBotones(chatId, messageId, textoFinal, botonesGestion);
+    
+    if (estadoUsuarios[chatId]) estadoUsuarios[chatId].fase = 'completado';
   }
-
-  const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Este alimento';
   
-  // Enviamos los datos con la nueva estructura
-  guardarEnSheets(alimento, titulo, username);
-
-  const textoFinal = `✅ *${alimento}* ha sido enjaulado en el *${titulo}*.\n\n⚠️ ${feedback}\n\nEscribe /start para registrar la siguiente víctima.`;
-
-  editarMensaje(chatId, messageId, textoFinal);
-  
-  if (estadoUsuarios[chatId]) {
-    estadoUsuarios[chatId].fase = 'completado';
+  // 2. Gestión de actualizaciones de estado (Consumido / Optimizado)
+  else if (data.startsWith("act_")) {
+    const partes = data.split("_");
+    const nuevoEstado = partes[1];
+    const alimento = partes[2];
+    
+    // Llamamos a la hoja con la acción "actualizar"
+    comunicacionSheets({ action: "actualizar", alimento: alimento, usuario: username, nuevoEstado: nuevoEstado }, (respuesta) => {
+      let textoConfirmacion = `💼 Inventario MOAD Actualizado:\n\nEl alimento *${alimento}* ha cambiado su estado a *${nuevoEstado}* con éxito. ¡Buen trabajo optimizando!\n\nEscribe /start para procesar el siguiente alimento.`;
+      editarMensaje(chatId, messageId, textoConfirmacion);
+    });
   }
 }
 
@@ -139,6 +163,10 @@ function editarMensaje(chatId, messageId, texto) {
   hacerPeticion('/editMessageText', JSON.stringify({ chat_id: chatId, message_id: messageId, text: texto, parse_mode: 'Markdown' }));
 }
 
+function editarMensajeConBotones(chatId, messageId, texto, teclado) {
+  hacerPeticion('/editMessageText', JSON.stringify({ chat_id: chatId, message_id: messageId, text: texto, parse_mode: 'Markdown', reply_markup: teclado }));
+}
+
 function hacerPeticion(endpoint, payload) {
   const options = {
     hostname: 'api.telegram.org',
@@ -150,7 +178,5 @@ function hacerPeticion(endpoint, payload) {
   req.write(payload);
   req.end();
 }
-
-checkTelegram();
 
 checkTelegram();
