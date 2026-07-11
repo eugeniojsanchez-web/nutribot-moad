@@ -16,7 +16,7 @@ if (!token) process.exit(1);
 let lastUpdateId = 0;
 const estadoUsuarios = {}; // Memoria temporal del bot
 
-// Función para enviar datos a tu Google Sheet
+// Función mejorada y segura para enviar datos a tu Google Sheet
 function guardarEnSheets(alimento, segmento, usuario) {
   const data = JSON.stringify({ alimento: alimento, segmento: segmento, usuario: usuario });
   const urlObj = new URL(URL_SHEET);
@@ -24,9 +24,20 @@ function guardarEnSheets(alimento, segmento, usuario) {
     hostname: urlObj.hostname,
     path: urlObj.pathname + urlObj.search,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
   };
-  const req = https.request(options);
+  
+  const req = https.request(options, (res) => {
+    // Escuchamos la respuesta de Google para evitar que la petición se quede colgada
+    let body = '';
+    res.on('data', chunk => body += chunk);
+    res.on('end', () => { /* Datos procesados con éxito */ });
+  });
+
+  req.on('error', (e) => {
+    console.error("Error guardando en Sheets: ", e);
+  });
+
   req.write(data);
   req.end();
 }
@@ -104,7 +115,7 @@ function manejarBoton(callbackQuery) {
 
   const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Este alimento';
   
-  // Aquí activamos el registro en tu Google Sheet
+  // Enviamos los datos con la nueva estructura
   guardarEnSheets(alimento, titulo, username);
 
   const textoFinal = `✅ *${alimento}* ha sido enjaulado en el *${titulo}*.\n\n⚠️ ${feedback}\n\nEscribe /start para registrar la siguiente víctima.`;
@@ -139,5 +150,7 @@ function hacerPeticion(endpoint, payload) {
   req.write(payload);
   req.end();
 }
+
+checkTelegram();
 
 checkTelegram();
