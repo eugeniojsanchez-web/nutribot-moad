@@ -3,7 +3,7 @@ const https = require('https');
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('NutriBot MOAD - Sistema A-E Operativo\n');
+  res.end('NutriBot MOAD Operativo\n');
 });
 server.listen(process.env.PORT || 3000);
 
@@ -62,50 +62,36 @@ function manejarMensaje(message) {
 
   if (texto.toLowerCase() === '/start' || texto.toLowerCase() === 'hola') {
     estadoUsuarios[chatId] = { fase: 'esperando_alimento' };
-    enviarTexto(chatId, "Bienvenido al sistema operativo MOAD. Ya es hora de dejar de tirar dinero a la basura por mala planificación.\n\nDime, ¿qué alimento acaba de cruzar la puerta de tu casa o estás a punto de guardar?");
+    enviarTexto(chatId, "Bienvenido al sistema MOAD. ¿Qué alimento vamos a enjaular hoy?");
   } 
-  // NUEVO COMANDO: /nevera para gestionar lo enjaulado
   else if (texto.toLowerCase() === '/nevera') {
-    enviarTexto(chatId, "Consultando las celdas de tu nevera... Un momento.");
     comunicacionSheets({ action: "leer", usuario: username }, (res) => {
       try {
         const resultado = JSON.parse(res);
-        if (resultado.status === "success" && resultado.alimentos.length > 0) {
-          enviarTexto(chatId, "Estos son tus alimentos actualmente *Enjaulados*. Haz clic en el que vayas a sacar de la nevera:");
+        if (resultado.status === "success" && resultado.alimentos && resultado.alimentos.length > 0) {
+          enviarTexto(chatId, "Estos son tus alimentos Enjaulados:");
           resultado.alimentos.forEach(item => {
-            const botones = {
-              inline_keyboard: [
-                [
-                  { text: "😋 Consumido", callback_data: `act_Consumido_${item.alimento}` },
-                  { text: "♻️ Transformado", callback_data: `act_Optimizado_${item.alimento}` }
-                ]
-              ]
-            };
+            const botones = { inline_keyboard: [[
+              { text: "😋 Consumido", callback_data: `act_Consumido_${item.alimento}` },
+              { text: "♻️ Transformado", callback_data: `act_Optimizado_${item.alimento}` }
+            ]]};
             enviarTextoConBotones(chatId, `📍 *${item.alimento}* (${item.segmento})`, botones);
           });
         } else {
-          enviarTexto(chatId, "Tu nevera está vacía en el sistema. ¡Buen trabajo! No hay riesgo de desperdicio ahora mismo. Manda /start para añadir algo.");
+          enviarTexto(chatId, "Tu nevera está vacía en el sistema.");
         }
-      } catch (e) {
-        enviarTexto(chatId, "Error al leer los datos de la nevera.");
-      }
+      } catch (e) { enviarTexto(chatId, "Error al leer los datos."); }
     });
   }
   else if (estadoUsuarios[chatId] && estadoUsuarios[chatId].fase === 'esperando_alimento') {
     estadoUsuarios[chatId].alimento = texto;
     estadoUsuarios[chatId].fase = 'esperando_segmento';
-    
-    const pregunta = `Has registrado: *${texto}*.\n\nNo lo tires al fondo de la nevera a que muera de asco. ¿A qué segmento MOAD pertenece? Elige con cabeza:`;
-    const botones = {
-      inline_keyboard: [
-        [{ text: "A: Listo (0-48h)", callback_data: "seg_A" }, { text: "B: Planificado (2-5 días)", callback_data: "seg_B" }],
-        [{ text: "C: Transformable", callback_data: "C" }, { text: "D: Estabilizado (>5 días)", callback_data: "seg_D" }],
-        [{ text: "E: Revalorizado (Circular)", callback_data: "seg_E" }]
-      ]
-    };
-    enviarTextoConBotones(chatId, pregunta, botones);
-  } else {
-    enviarTexto(chatId, "Para registrar un alimento manda /start. Para ver y gestionar lo que tienes guardado manda /nevera.");
+    const botones = { inline_keyboard: [
+      [{ text: "A: Listo", callback_data: "seg_A" }, { text: "B: Planificado", callback_data: "seg_B" }],
+      [{ text: "C: Transformable", callback_data: "seg_C" }, { text: "D: Estabilizado", callback_data: "seg_D" }],
+      [{ text: "E: Revalorizado", callback_data: "seg_E" }]
+    ]};
+    enviarTextoConBotones(chatId, `¿A qué segmento pertenece *${texto}*?`, botones);
   }
 }
 
@@ -116,37 +102,17 @@ function manejarBoton(callbackQuery) {
   const username = callbackQuery.from.username || "Usuario";
   
   if (data.startsWith("seg_")) {
-    let letraSegmento = data.split("_")[1];
-    let titulo = "";
-    let feedback = "";
-    
-    switch(letraSegmento) {
-      case 'A': titulo = "Segmento A (Uso Inmediato)"; feedback = "Tienes de 0 a 48 horas. El reloj corre. Cómetelo ya."; break;
-      case 'B': titulo = "Segmento B (Consumo Diferido)"; feedback = "Tienes de 2 a 5 días. Estará planificado, pero no te olvides de él."; break;
-      case 'C': titulo = "Segmento C (Procesamiento)"; feedback = "Tiempo variable. Hora de procesar y cocinar. Haz algo útil con él."; break;
-      case 'D': titulo = "Segmento D (Conservación Extendida)"; feedback = "Más de 5 días de margen. Seguro y estabilizado, pero no te confíes ni lo dejes fosilizar."; break;
-      case 'E': titulo = "Segmento E (Subproducto Útil)"; feedback = "Ciclo circular activado. Este subproducto aún tiene guerra que dar."; break;
-    }
-
-    const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Este alimento';
-    
+    let letra = data.split("_")[1];
+    let titulo = "Segmento " + letra;
+    const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Alimento';
     comunicacionSheets({ action: "registrar", alimento: alimento, segmento: titulo, usuario: username });
-
-    // Cierre limpio: El alimento se queda ENJAULADO de verdad.
-    const textoFinal = `✅ *${alimento}* ha sido enjaulado con éxito en el *${titulo}*.\n\n⚠️ ${feedback}\n\nCuando vayas a consumirlo o transformarlo en el futuro, usa el comando /nevera para liberarlo.`;
-    editarMensaje(chatId, messageId, textoFinal);
-    
+    editarMensaje(chatId, messageId, `✅ *${alimento}* enjaulado en ${titulo}.`);
     if (estadoUsuarios[chatId]) estadoUsuarios[chatId].fase = 'completado';
   }
-  
   else if (data.startsWith("act_")) {
     const partes = data.split("_");
-    const nuevoEstado = partes[1];
-    const alimento = partes[2];
-    
-    comunicacionSheets({ action: "actualizar", alimento: alimento, usuario: username, nuevoEstado: nuevoEstado }, (respuesta) => {
-      let textoConfirmacion = `💼 *Inventario MOAD Actualizado*\n\nEl alimento *${alimento}* ha sido liberado como *${nuevoEstado}*.\n\nUsa /nevera para seguir gestionando o /start para registrar algo nuevo.`;
-      editarMensaje(chatId, messageId, textoConfirmacion);
+    comunicacionSheets({ action: "actualizar", alimento: partes[2], usuario: username, nuevoEstado: partes[1] }, (res) => {
+      editarMensaje(chatId, messageId, `💼 Inventario actualizado: ${partes[2]} marcado como ${partes[1]}.`);
     });
   }
 }
@@ -154,17 +120,8 @@ function manejarBoton(callbackQuery) {
 function enviarTexto(chatId, texto) { hacerPeticion('/sendMessage', JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'Markdown' })); }
 function enviarTextoConBotones(chatId, texto, teclado) { hacerPeticion('/sendMessage', JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'Markdown', reply_markup: teclado })); }
 function editarMensaje(chatId, messageId, texto) { hacerPeticion('/editMessageText', JSON.stringify({ chat_id: chatId, message_id: messageId, text: texto, parse_mode: 'Markdown' })); }
-
 function hacerPeticion(endpoint, payload) {
-  const options = {
-    hostname: 'api.telegram.org',
-    path: `/bot${token}${endpoint}`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-  };
-  const req = https.request(options);
-  req.write(payload);
-  req.end();
+  const options = { hostname: 'api.telegram.org', path: `/bot${token}${endpoint}`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } };
+  const req = https.request(options); req.write(payload); req.end();
 }
-
 checkTelegram();
