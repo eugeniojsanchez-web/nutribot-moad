@@ -8,7 +8,7 @@ const server = http.createServer((req, res) => {
 server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
-const URL_SHEET = "https://script.google.com/macros/s/AKfycbzEFlq1oUJJAsQ_o42OD4uTl6aO8VNgm4QxcPACqSZonlyJPiBZOj7qYcqfop_yA4xA/exec";
+const URL_SHEET = "https://script.google.com/macros/s/AKfycbzpi8T0Li0v3W6pg0QXxo8-rpT_XXLlWb9n7fQoV2myH2TOXuH4s5RyBRrLEU6-_uaU/exec";
 
 if (!token) process.exit(1);
 
