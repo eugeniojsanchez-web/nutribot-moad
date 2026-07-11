@@ -9,10 +9,27 @@ const server = http.createServer((req, res) => {
 server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
+const URL_SHEET = "https://script.google.com/macros/s/AKfycbzEFlq1oUJJAsQ_o42OD4uTl6aO8VNgm4QxcPACqSZonlyJPiBZOj7qYcqfop_yA4xA/exec";
+
 if (!token) process.exit(1);
 
 let lastUpdateId = 0;
 const estadoUsuarios = {}; // Memoria temporal del bot
+
+// Función para enviar datos a tu Google Sheet
+function guardarEnSheets(alimento, segmento, usuario) {
+  const data = JSON.stringify({ alimento: alimento, segmento: segmento, usuario: usuario });
+  const urlObj = new URL(URL_SHEET);
+  const options = {
+    hostname: urlObj.hostname,
+    path: urlObj.pathname + urlObj.search,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
+  };
+  const req = https.request(options);
+  req.write(data);
+  req.end();
+}
 
 function checkTelegram() {
   const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`;
@@ -72,34 +89,24 @@ function manejarBoton(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
+  const username = callbackQuery.from.username || "Usuario";
   
   let titulo = "";
   let feedback = "";
   
   switch(data) {
-    case 'A': 
-      titulo = "Segmento A (Uso Inmediato)"; 
-      feedback = "Tienes de 0 a 48 horas. El reloj corre. Cómetelo ya."; 
-      break;
-    case 'B': 
-      titulo = "Segmento B (Consumo Diferido)"; 
-      feedback = "Tienes de 2 a 5 días. Estará planificado, pero no te olvides de él."; 
-      break;
-    case 'C': 
-      titulo = "Segmento C (Procesamiento)"; 
-      feedback = "Tiempo variable. Hora de procesar y cocinar. Haz algo útil con él."; 
-      break;
-    case 'D': 
-      titulo = "Segmento D (Conservación Extendida)"; 
-      feedback = "Más de 5 días de margen. Seguro y estabilizado, pero no te confíes ni lo dejes fosilizar."; 
-      break;
-    case 'E': 
-      titulo = "Segmento E (Subproducto Útil)"; 
-      feedback = "Ciclo circular activado. Este subproducto aún tiene guerra que dar."; 
-      break;
+    case 'A': titulo = "Segmento A (Uso Inmediato)"; feedback = "Tienes de 0 a 48 horas. El reloj corre. Cómetelo ya."; break;
+    case 'B': titulo = "Segmento B (Consumo Diferido)"; feedback = "Tienes de 2 a 5 días. Estará planificado, pero no te olvides de él."; break;
+    case 'C': titulo = "Segmento C (Procesamiento)"; feedback = "Tiempo variable. Hora de procesar y cocinar. Haz algo útil con él."; break;
+    case 'D': titulo = "Segmento D (Conservación Extendida)"; feedback = "Más de 5 días de margen. Seguro y estabilizado, pero no te confíes ni lo dejes fosilizar."; break;
+    case 'E': titulo = "Segmento E (Subproducto Útil)"; feedback = "Ciclo circular activado. Este subproducto aún tiene guerra que dar."; break;
   }
 
   const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Este alimento';
+  
+  // Aquí activamos el registro en tu Google Sheet
+  guardarEnSheets(alimento, titulo, username);
+
   const textoFinal = `✅ *${alimento}* ha sido enjaulado en el *${titulo}*.\n\n⚠️ ${feedback}\n\nEscribe /start para registrar la siguiente víctima.`;
 
   editarMensaje(chatId, messageId, textoFinal);
@@ -134,4 +141,3 @@ function hacerPeticion(endpoint, payload) {
 }
 
 checkTelegram();
-
