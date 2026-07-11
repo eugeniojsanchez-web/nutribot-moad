@@ -1,0 +1,9 @@
+{
+  "name": "nutribot-moad",
+  "version": "1.0.0",
+  "description": "Sistema Operativo MOAD",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  }
+}
