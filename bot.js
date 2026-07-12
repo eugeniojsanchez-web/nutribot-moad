@@ -72,7 +72,7 @@ function manejarMensaje(message) {
 
   if (texto.toLowerCase() === '/start' || texto.toLowerCase() === 'hola') {
     estadoUsuarios[chatId] = { fase: 'esperando_alimento' };
-    enviarTexto(chatId, "📊 *Sistema MOAD Métrico y Financiero*\n¿Qué alimento vamos a registrar hoy?");
+    enviarTexto(chatId, "📊 *Sistema MOAD Proporcional*\n¿Qué alimento vamos a registrar hoy?");
   } 
   else if (texto.toLowerCase() === '/nevera') {
     comunicacionSheets({ action: "leer", usuario: userIdSeguro }, (res) => {
@@ -83,14 +83,13 @@ function manejarMensaje(message) {
           resultado.alimentos.forEach(item => {
             const botones = { inline_keyboard: [
               [
-                { text: "😋 Consumido", callback_data: `act_Consumido_${item.alimento}` },
-                { text: "♻️ Transformado", callback_data: `act_Transformado_${item.alimento}` }
+                { text: "😋 Consumir porción", callback_data: `act_Consumido_${item.alimento}` },
+                { text: "♻️ Transformar porción", callback_data: `act_Transformado_${item.alimento}` }
               ],
               [
-                { text: "🗑️ Desperdiciado", callback_data: `act_Desperdiciado_${item.alimento}` }
+                { text: "🗑️ Desperdiciar porción", callback_data: `act_Desperdiciado_${item.alimento}` }
               ]
             ]};
-            // Ahora la nevera te recuerda de forma exacta la cantidad y su unidad asignada
             enviarTextoConBotones(chatId, `📍 *${item.alimento}* [${item.cantidad} ${item.unidad}] (${item.segmento})`, botones);
           });
         } else {
@@ -105,7 +104,7 @@ function manejarMensaje(message) {
     if (fase === 'esperando_alimento') {
       estadoUsuarios[chatId].alimento = texto;
       estadoUsuarios[chatId].fase = 'esperando_cantidad';
-      enviarTexto(chatId, `¿Qué *cantidad* vas a introducir para *${texto}*? (Ej: 5, 1.5, 2)`);
+      enviarTexto(chatId, `¿Qué *cantidad* vas a introducir para *${texto}*? (Ej: 3, 1.5)`);
     } 
     else if (fase === 'esperando_cantidad') {
       const cantidad = parseFloat(texto.replace(',', '.'));
@@ -116,7 +115,6 @@ function manejarMensaje(message) {
       estadoUsuarios[chatId].cantidad = cantidad;
       estadoUsuarios[chatId].fase = 'esperando_unidad';
       
-      // Botones rápidos para la Unidad de Medida
       const botonesUnidad = { inline_keyboard: [
         [{ text: "⚖️ Kilos (Kg)", callback_data: "uni_Kg" }, { text: "💧 Litros (L)", callback_data: "uni_L" }],
         [{ text: "📦 Unidades (Ud)", callback_data: "uni_Ud" }]
@@ -139,6 +137,31 @@ function manejarMensaje(message) {
       ]};
       enviarTextoConBotones(chatId, `¿A qué segmento MOAD pertenece *${estadoUsuarios[chatId].alimento}*?`, botones);
     }
+    // ⚖️ NUEVO CAPTURADOR: Esperando la cantidad de la baja parcial
+    else if (fase === 'esperando_cantidad_baja') {
+      const cantidadBaja = parseFloat(texto.replace(',', '.'));
+      if (isNaN(cantidadBaja) || cantidadBaja <= 0) {
+        enviarTexto(chatId, "Por favor, introduce una cantidad válida y mayor que cero.");
+        return;
+      }
+      
+      const infoBaja = estadoUsuarios[chatId];
+      comunicacionSheets({ 
+        action: "actualizar", 
+        alimento: infoBaja.alimentoBaja, 
+        usuario: userIdSeguro, 
+        nuevoEstado: infoBaja.accionBaja,
+        cantidadBaja: cantidadBaja
+      }, (res) => {
+        let icono = "💼";
+        if (infoBaja.accionBaja === "Consumido") icono = "😋";
+        if (infoBaja.accionBaja === "Transformado") icono = "♻️";
+        if (infoBaja.accionBaja === "Desperdiciado") icono = "🗑️";
+        
+        enviarTexto(chatId, `${icono} *Movimiento Registrado*: Se han extraído *${cantidadBaja}* del lote de *${infoBaja.alimentoBaja}* con destino *${infoBaja.accionBaja}*. El saldo restante se ha actualizado en la hoja.`);
+        estadoUsuarios[chatId] = {}; // Reseteamos estado limpio
+      });
+    }
   }
 }
 
@@ -148,17 +171,15 @@ function manejarBoton(callbackQuery) {
   const messageId = callbackQuery.message.message_id;
   const userIdSeguro = String(chatId);
   
-  // Captura de Unidad de Medida
   if (data.startsWith("uni_")) {
     let unidadSeleccionada = data.split("_")[1];
     if (estadoUsuarios[chatId]) {
       estadoUsuarios[chatId].unidad = unidadSeleccionada;
       estadoUsuarios[chatId].fase = 'esperando_precio';
       editarMensaje(chatId, messageId, `Medida fijada en: *${unidadSeleccionada}*`);
-      enviarTexto(chatId, `¿Cuál es el *precio por ${unidadSeleccionada}* de este alimento? (Ej: 2.50)`);
+      enviarTexto(chatId, `¿Cuál es el *precio por ${unidadSeleccionada}* de este alimento?`);
     }
   }
-  // Captura de Segmento y Registro Final
   else if (data.startsWith("seg_")) {
     let letra = data.split("_")[1];
     let titulo = "Segmento " + letra;
@@ -175,24 +196,26 @@ function manejarBoton(callbackQuery) {
         usuario: userIdSeguro 
       }, (res) => {
         const costeTotal = (info.cantidad * info.precio).toFixed(2);
-        editarMensaje(chatId, messageId, `✅ *${info.alimento}* (${info.cantidad} ${info.unidad} a ${info.precio}€/${info.unidad}) guardado en *${titulo}*.\n💰 Valor total del lote: *${costeTotal}€*.`);
-        estadoUsuarios[chatId].fase = 'completado';
+        editarMensaje(chatId, messageId, `✅ *${info.alimento}* (${info.cantidad} ${info.unidad} a ${info.precio}€) enjaulado en *${titulo}*.\n💰 Valor total: *${costeTotal}€*.`);
+        estadoUsuarios[chatId] = {}; // Reset limpio
       });
     }
   }
+  // 🔄 GESTIÓN DE LA ACCIÓN DE LA NEVERA (PREPARA LA BAJA PARCIAL)
   else if (data.startsWith("act_")) {
     const partes = data.split("_");
-    const accion = partes[1];
+    const accion = partes[1]; // Consumido / Transformado / Desperdiciado
     const alimento = partes[2];
     
-    comunicacionSheets({ action: "actualizar", alimento: alimento, usuario: userIdSeguro, nuevoEstado: accion }, (res) => {
-      let icono = "💼";
-      if (accion === "Consumido") icono = "😋";
-      if (accion === "Transformado") icono = "♻️";
-      if (accion === "Desperdiciado") icono = "🗑️";
-      
-      editarMensaje(chatId, messageId, `${icono} *Inventario actualizado*: El lote de *${alimento}* ha sido marcado como *${accion}*.`);
-    });
+    // Cambiamos el estado del usuario para ponerlo en modo "esperando el número de kilos/unidades a sacar"
+    estadoUsuarios[chatId] = {
+      fase: 'esperando_cantidad_baja',
+      accionBaja: accion,
+      alimentoBaja: alimento
+    };
+    
+    editarMensaje(chatId, messageId, `Fijando salida por motivo: *${accion}*`);
+    enviarTexto(chatId, `¿Qué *cantidad* (número) de *${alimento}* quieres marcar como *${accion}*?`);
   }
 }
 
