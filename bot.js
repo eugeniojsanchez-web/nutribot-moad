@@ -18,7 +18,6 @@ if (!token || !URL_SHEET) {
 
 let lastUpdateId = 0;
 
-// Objetos para controlar el flujo y estados de cada usuario
 const estadoUsuario = {};
 const datosRegistro = {};
 const loteSeleccionado = {};
@@ -42,7 +41,10 @@ function comunicacionSheets(payload, callback) {
       res.on('data', chunk => body += chunk);
       res.on('end', () => { if (callback) callback(body); });
     });
-    req.on('error', (e) => console.error("Error en conexión Sheets:", e));
+    req.on('error', (e) => {
+      console.error("Error en conexión Sheets:", e);
+      if (callback) callback(JSON.stringify({ status: "error", message: e.message }));
+    });
     req.write(data); 
     req.end();
   }
@@ -74,7 +76,6 @@ function manejarMensaje(message) {
   const chatId = message.chat.id;
   const texto = message.text.trim();
 
-  // COMANDOS DE BARRA PRINCIPALES
   if (texto.toLowerCase() === '/start') {
     delete estadoUsuario[chatId];
     delete datosRegistro[chatId];
@@ -84,7 +85,8 @@ function manejarMensaje(message) {
       [{ text: "📥 Registrar Compra", callback_data: "menu_registrar" }],
       [{ text: "🗄️ Ver Nevera / Inventario", callback_data: "menu_nevera" }]
     ]};
-    enviarTextoConBotones(chatId, "📊 *Control de Inventario MOAD*\n\nBienvenido Alejandro. ¿Qué deseas hacer hoy?", menuPrincipal);
+    // Modificado: Saludo completamente anónimo y limpio
+    enviarTextoConBotones(chatId, "📊 *Control de Inventario MOAD*\n\n¡Hola! Bienvenido. ¿Qué deseas hacer hoy?", menuPrincipal);
     return;
   }
 
@@ -93,7 +95,7 @@ function manejarMensaje(message) {
     return;
   }
 
-  // FLUJO 1: REGISTRAR ALIMENTO NUEVO (PASO A PASO)
+  // FLUJO DE REGISTRO
   if (estadoUsuario[chatId]) {
     const paso = estadoUsuario[chatId];
 
@@ -141,7 +143,7 @@ function manejarMensaje(message) {
     }
   }
 
-  // FLUJO 2: INTRODUCIR CANTIDAD PARA EXTRAER/CONSUMIR UN LOTE
+  // FLUJO DE RETIRADA / CONSUMO
   if (loteSeleccionado[chatId]) {
     const cantidadBaja = parseFloat(texto.replace(',', '.'));
     if (isNaN(cantidadBaja) || cantidadBaja <= 0) {
@@ -166,12 +168,12 @@ function manejarMensaje(message) {
         if (respuesta.status === "error") {
           enviarTexto(chatId, "❌ Error en Google Sheets: " + respuesta.message);
         } else if (respuesta.remanente === 0) {
-          enviarTexto(chatId, `${icono} *Lote agotado*: Se han consumido las últimas unidades. Registrado correctamente en el historial.`);
+          enviarTexto(chatId, `${icono} *Lote agotado*: Se han consumido las últimas unidades.`);
         } else {
           enviarTexto(chatId, `${icono} *Movimiento registrado*\n• Retirado: *${cantidadBaja}*\n• Motivo: *${infoLote.accion}*\n• Quedan en inventario: *${respuesta.remanente.toFixed(2)}*`);
         }
       } catch(e) {
-        enviarTexto(chatId, "✅ Movimiento procesado con éxito en tus hojas de cálculo.");
+        enviarTexto(chatId, "✅ Movimiento procesado con éxito.");
       }
       delete loteSeleccionado[chatId];
     });
@@ -183,7 +185,6 @@ function manejarBoton(callbackQuery) {
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
 
-  // Respuestas del menú principal
   if (data === "menu_registrar") {
     estadoUsuario[chatId] = 'ESPERANDO_ALIMENTO';
     enviarTexto(chatId, "📝 Vamos a registrar una nueva compra.\n¿Qué alimento has comprado? (Escribe el nombre, ej: Huevos, Tomates, Pollo):");
@@ -197,7 +198,6 @@ function manejarBoton(callbackQuery) {
     return;
   }
 
-  // Selección del segmento en el registro de compra
   if (data.startsWith("seg_")) {
     const segmento = data.replace("seg_", "");
     if (datosRegistro[chatId]) {
@@ -211,7 +211,7 @@ function manejarBoton(callbackQuery) {
         try {
           const r = JSON.parse(res);
           if (r.status === "success") {
-            enviarTexto(chatId, `📥 *¡Alimento Registrado!*\n\n🍏 *Articulo:* ${datosRegistro[chatId].alimento}\n📦 *Lote asignado:* \`${r.idLote}\`\n📍 *Zona:* ${segmento}`);
+            enviarTexto(chatId, `📥 *¡Alimento Registrado!*\n\n🍏 *Artículo:* ${datosRegistro[chatId].alimento}\n📦 *Lote asignado:* \`${r.idLote}\`\n📍 *Zona:* ${segmento}`);
           } else {
             enviarTexto(chatId, "❌ Error al guardar en Google Sheets.");
           }
@@ -226,7 +226,6 @@ function manejarBoton(callbackQuery) {
     return;
   }
 
-  // Acciones sobre lotes existentes en la nevera
   if (data.startsWith("act_")) {
     const partes = data.split("_");
     const accion = partes[1]; 
@@ -244,7 +243,6 @@ function mostrarNevera(chatId) {
   enviarTexto(chatId, "🔍 Consultando tu base de datos actual...");
   comunicacionSheets({ action: "leer" }, (res) => {
     try {
-      // Diagnóstico de seguridad: si Google nos manda un error o texto plano, se captura aquí
       const resultado = JSON.parse(res);
       if (resultado.status === "success" && resultado.alimentos && resultado.alimentos.length > 0) {
         enviarTexto(chatId, "🗄️ *Artículos en tu despensa activa:*");
@@ -270,9 +268,8 @@ function mostrarNevera(chatId) {
         enviarTexto(chatId, "🥦 Tu inventario actual está vacío. ¡Usa el botón de Registrar Compra para añadir alimentos!");
       }
     } catch (e) {
-      // Si el JSON falla, exponemos los primeros caracteres de lo que responde Google para saber el problema real
       console.error("Respuesta fallida de Google:", res);
-      enviarTexto(chatId, `⚠️ No se pudo leer la despensa.\n\n*Causa posible:* Google Apps Script no está devolviendo datos válidos. Comprueba que guardaste la versión como pública ("Cualquiera") y que la URL de Render está actualizada.`);
+      enviarTexto(chatId, `⚠️ No se pudo leer la despensa.\n\nComprueba que has rellenado una nueva compra primero con el botón 'Registrar Compra'.`);
     }
   });
 }
@@ -286,5 +283,5 @@ function hacerPeticion(endpoint, payload) {
   const req = https.request(options); req.write(payload); req.end();
 }
 
-console.log("🤖 NutriBot MOAD iniciado con todas las funciones...");
+console.log("🤖 NutriBot MOAD iniciado...");
 checkTelegram();
