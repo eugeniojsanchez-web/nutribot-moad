@@ -30,7 +30,7 @@ async function comunicacionSheets(payload) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      redirect: 'follow' // Instrucción clave: node-fetch sigue las redirecciones de Google de forma automática y segura
+      redirect: 'follow' // Sigue las redirecciones automáticas de Google de forma segura
     });
     
     const textoRespuesta = await response.text();
@@ -132,7 +132,7 @@ async function manejarMensaje(message) {
     }
   }
 
-  // FLUJO DE RETIRADA
+  // FLUJO DE RETIRADA (CON MODO RASTREO INTEGRADO)
   if (loteSeleccionado[chatId]) {
     const cantidadBaja = parseFloat(texto.replace(',', '.'));
     if (isNaN(cantidadBaja) || cantidadBaja <= 0) {
@@ -141,11 +141,11 @@ async function manejarMensaje(message) {
     }
 
     const infoLote = loteSeleccionado[chatId];
-    enviarTexto(chatId, "🔄 Conectando con Google Sheets para descontar porción...");
+    enviarTexto(chatId, `🔄 Descontando del lote \`${infoLote.idLote}\`...`);
 
     const res = await comunicacionSheets({ 
       action: "actualizar", 
-      idLote: infoLote.idLote,
+      idLote: String(infoLote.idLote).trim(),
       usuario: String(chatId), 
       nuevoEstado: infoLote.accion,
       cantidadBaja: cantidadBaja
@@ -156,14 +156,15 @@ async function manejarMensaje(message) {
       let icono = infoLote.accion === "Consumido" ? "😋" : (infoLote.accion === "Transformado" ? "♻️" : "🗑️");
       
       if (respuesta.status === "error") {
-        enviarTexto(chatId, "❌ Error en Google Sheets: " + respuesta.message);
+        // En caso de error, el bot revelará los datos exactos que fallan en la coincidencia
+        enviarTexto(chatId, `❌ *Error de Google Sheets:*\n${respuesta.message}\n\n🔍 *Rastreo del Bot:*\n• Buscando ID: \`${infoLote.idLote}\`\n• Longitud ID: ${String(infoLote.idLote).length} caracteres.`);
       } else if (respuesta.remanente === 0) {
         enviarTexto(chatId, `${icono} *Lote agotado*: Se han consumido las últimas unidades.`);
       } else {
         enviarTexto(chatId, `${icono} *Movimiento registrado*\n• Retirado: *${cantidadBaja}*\n• Motivo: *${infoLote.accion}*\n• Quedan en inventario: *${respuesta.remanente.toFixed(2)}*`);
       }
     } catch(e) {
-      enviarTexto(chatId, "✅ Movimiento procesado con éxito.");
+      enviarTexto(chatId, `⚠️ *Respuesta inesperada de Google:*\n\`\`\`\n${res}\n\`\`\``);
     }
     delete loteSeleccionado[chatId];
   }
@@ -258,7 +259,6 @@ async function mostrarNevera(chatId) {
       enviarTexto(chatId, "🥦 Tu inventario actual está vacío. ¡Usa el botón de Registrar Compra para añadir alimentos!");
     }
   } catch (e) {
-    // Si falla el parseo de JSON, capturamos qué está respondiendo Google exactamente para solucionarlo
     const fragmentoRespuesta = String(res).substring(0, 250);
     enviarTexto(chatId, `⚠️ *Diagnóstico de respuesta Google:*\n\n\`\`\`\n${fragmentoRespuesta}\n\`\`\``);
   }
