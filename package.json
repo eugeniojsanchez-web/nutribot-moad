@@ -1,9 +1,12 @@
 {
   "name": "nutribot-moad",
   "version": "1.0.0",
-  "description": "Sistema Operativo MOAD",
+  "description": "Bot de control de inventario",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
   }
 }
