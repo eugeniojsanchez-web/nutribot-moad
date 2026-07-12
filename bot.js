@@ -9,7 +9,7 @@ server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
 // ⚠️ REEMPLAZA ESTA URL CON TU URL DE "SIN TÍTULO"
-const URL_SHEET = "TU_URL_DE_APLICACION_WEB";
+const URL_SHEET = "https://script.google.com/macros/s/AKfycbzpi8T0Li0v3W6pg0QXxo8-rpT_XXLlWb9n7fQoV2myH2TOXuH4s5RyBRrLEU6-_uaU/exec";
 
 if (!token) process.exit(1);
 
