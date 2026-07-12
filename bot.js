@@ -48,7 +48,7 @@ function comunicacionSheets(payload, callback) {
     req.write(data); 
     req.end();
   }
-  realizarPeticion(URL_SHEET);
+  realizarPeticion(urlDestino => urlDestino || URL_SHEET)(URL_SHEET);
 }
 
 function checkTelegram() {
@@ -85,7 +85,6 @@ function manejarMensaje(message) {
       [{ text: "📥 Registrar Compra", callback_data: "menu_registrar" }],
       [{ text: "🗄️ Ver Nevera / Inventario", callback_data: "menu_nevera" }]
     ]};
-    // Modificado: Saludo completamente anónimo y limpio
     enviarTextoConBotones(chatId, "📊 *Control de Inventario MOAD*\n\n¡Hola! Bienvenido. ¿Qué deseas hacer hoy?", menuPrincipal);
     return;
   }
@@ -143,7 +142,7 @@ function manejarMensaje(message) {
     }
   }
 
-  // FLUJO DE RETIRADA / CONSUMO
+  // FLUJO DE RETIRADA
   if (loteSeleccionado[chatId]) {
     const cantidadBaja = parseFloat(texto.replace(',', '.'));
     if (isNaN(cantidadBaja) || cantidadBaja <= 0) {
@@ -239,6 +238,7 @@ function manejarBoton(callbackQuery) {
   }
 }
 
+// MODIFICACIÓN DIAGNÓSTICA PARA VER LA RESPUESTA DE GOOGLE
 function mostrarNevera(chatId) {
   enviarTexto(chatId, "🔍 Consultando tu base de datos actual...");
   comunicacionSheets({ action: "leer" }, (res) => {
@@ -268,8 +268,9 @@ function mostrarNevera(chatId) {
         enviarTexto(chatId, "🥦 Tu inventario actual está vacío. ¡Usa el botón de Registrar Compra para añadir alimentos!");
       }
     } catch (e) {
-      console.error("Respuesta fallida de Google:", res);
-      enviarTexto(chatId, `⚠️ No se pudo leer la despensa.\n\nComprueba que has rellenado una nueva compra primero con el botón 'Registrar Compra'.`);
+      // AQUÍ ESTÁ EL CAMBIO: El bot te mandará por Telegram las primeras 200 letras que escupa Google
+      const fragmentoRespuesta = String(res).substring(0, 200);
+      enviarTexto(chatId, `🔬 *Diagnóstico de respuesta Google:*\n\n\`\`\`\n${fragmentoRespuesta}\n\`\`\``);
     }
   });
 }
