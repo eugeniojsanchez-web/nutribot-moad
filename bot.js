@@ -8,7 +8,7 @@ const server = http.createServer((req, res) => {
 server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
-// ⚠️ RECUERDA: Pon aquí tu última URL de Google Apps Script entre las comillas
+// ⚠️ Coloca aquí tu URL activa de Google Apps Script
 const URL_SHEET = "https://script.google.com/macros/s/AKfycbzpi8T0Li0v3W6pg0QXxo8-rpT_XXLlWb9n7fQoV2myH2TOXuH4s5RyBRrLEU6-_uaU/exec";
 
 if (!token) process.exit(1);
@@ -53,23 +53,20 @@ function checkTelegram() {
       } catch (e) {}
       setTimeout(checkTelegram, 1000);
     });
-  }).on('error', (e) => {
-    console.error("Error en Telegram:", e);
-    setTimeout(checkTelegram, 5000);
-  });
+  }).on('error', (e) => setTimeout(checkTelegram, 5000));
 }
 
 function manejarMensaje(message) {
   const chatId = message.chat.id;
   const texto = message.text.trim();
-  const username = message.from.username || "Usuario";
+  const userIdSeguro = String(chatId); // Usamos el ID de chat como identificador único estable
 
   if (texto.toLowerCase() === '/start' || texto.toLowerCase() === 'hola') {
     estadoUsuarios[chatId] = { fase: 'esperando_alimento' };
     enviarTexto(chatId, "Bienvenido al sistema MOAD. ¿Qué alimento vamos a enjaular hoy?");
   } 
   else if (texto.toLowerCase() === '/nevera') {
-    comunicacionSheets({ action: "leer", usuario: username }, (res) => {
+    comunicacionSheets({ action: "leer", usuario: userIdSeguro }, (res) => {
       try {
         const resultado = JSON.parse(res);
         if (resultado.status === "success" && resultado.alimentos && resultado.alimentos.length > 0) {
@@ -105,19 +102,19 @@ function manejarBoton(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const data = callbackQuery.data;
   const messageId = callbackQuery.message.message_id;
-  const username = callbackQuery.from.username || "Usuario";
+  const userIdSeguro = String(chatId);
   
   if (data.startsWith("seg_")) {
     let letra = data.split("_")[1];
     let titulo = "Segmento " + letra;
     const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Alimento';
-    comunicacionSheets({ action: "registrar", alimento: alimento, segmento: titulo, usuario: username });
+    comunicacionSheets({ action: "registrar", alimento: alimento, segmento: titulo, usuario: userIdSeguro });
     editarMensaje(chatId, messageId, `✅ *${alimento}* enjaulado en ${titulo}.`);
     if (estadoUsuarios[chatId]) estadoUsuarios[chatId].fase = 'completado';
   }
   else if (data.startsWith("act_")) {
     const partes = data.split("_");
-    comunicacionSheets({ action: "actualizar", alimento: partes[2], usuario: username, nuevoEstado: partes[1] }, (res) => {
+    comunicacionSheets({ action: "actualizar", alimento: partes[2], usuario: userIdSeguro, nuevoEstado: partes[1] }, (res) => {
       editarMensaje(chatId, messageId, `💼 Inventario actualizado: ${partes[2]} marcado como ${partes[1]}.`);
     });
   }
