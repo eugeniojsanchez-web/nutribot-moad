@@ -8,7 +8,8 @@ const server = http.createServer((req, res) => {
 server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
-const URL_SHEET = "https://script.google.com/macros/s/AKfycbzEFlq1oUJJAsQ_o42OD4uTl6aO8VNgm4QxcPACqSZonlyJPiBZOj7qYcqfop_yA4xA/exec";
+// ⚠️ RECUERDA: Pon aquí tu última URL de Google Apps Script entre las comillas
+const URL_SHEET = "TU_NUEVA_URL_DE_APLICACION_WEB";
 
 if (!token) process.exit(1);
 
@@ -29,7 +30,7 @@ function comunicacionSheets(payload, callback) {
     res.on('data', chunk => body += chunk);
     res.on('end', () => { if (callback) callback(body); });
   });
-  req.on('error', (e) => console.error(e));
+  req.on('error', (e) => console.error("Error en Sheets:", e));
   req.write(data);
   req.end();
 }
@@ -52,7 +53,10 @@ function checkTelegram() {
       } catch (e) {}
       setTimeout(checkTelegram, 1000);
     });
-  }).on('error', () => setTimeout(checkTelegram, 5000));
+  }).on('error', (e) => {
+    console.error("Error en Telegram:", e);
+    setTimeout(checkTelegram, 5000);
+  });
 }
 
 function manejarMensaje(message) {
@@ -80,7 +84,9 @@ function manejarMensaje(message) {
         } else {
           enviarTexto(chatId, "Tu nevera está vacía en el sistema.");
         }
-      } catch (e) { enviarTexto(chatId, "Error al leer los datos."); }
+      } catch (e) { 
+        enviarTexto(chatId, "Error al leer los datos."); 
+      }
     });
   }
   else if (estadoUsuarios[chatId] && estadoUsuarios[chatId].fase === 'esperando_alimento') {
@@ -120,8 +126,10 @@ function manejarBoton(callbackQuery) {
 function enviarTexto(chatId, texto) { hacerPeticion('/sendMessage', JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'Markdown' })); }
 function enviarTextoConBotones(chatId, texto, teclado) { hacerPeticion('/sendMessage', JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'Markdown', reply_markup: teclado })); }
 function editarMensaje(chatId, messageId, texto) { hacerPeticion('/editMessageText', JSON.stringify({ chat_id: chatId, message_id: messageId, text: texto, parse_mode: 'Markdown' })); }
+
 function hacerPeticion(endpoint, payload) {
   const options = { hostname: 'api.telegram.org', path: `/bot${token}${endpoint}`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } };
   const req = https.request(options); req.write(payload); req.end();
 }
+
 checkTelegram();
