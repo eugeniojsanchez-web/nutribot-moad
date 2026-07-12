@@ -8,31 +8,50 @@ const server = http.createServer((req, res) => {
 server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
-// ⚠️ Coloca aquí tu URL activa de Google Apps Script
-const URL_SHEET = "https://script.google.com/macros/s/AKfycbzpi8T0Li0v3W6pg0QXxo8-rpT_XXLlWb9n7fQoV2myH2TOXuH4s5RyBRrLEU6-_uaU/exec";
+// ⚠️ Coloca aquí tu URL activa de Google Apps Script (la que termina en /exec)
+const URL_SHEET = "TU_URL_DE_APLICACION_WEB";
 
 if (!token) process.exit(1);
 
 let lastUpdateId = 0;
 const estadoUsuarios = {};
 
+// Función de comunicación mejorada para seguir redirecciones de Google
 function comunicacionSheets(payload, callback) {
   const data = JSON.stringify(payload);
-  const urlObj = new URL(URL_SHEET);
-  const options = {
-    hostname: urlObj.hostname,
-    path: urlObj.pathname + urlObj.search,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
-  };
-  const req = https.request(options, (res) => {
-    let body = '';
-    res.on('data', chunk => body += chunk);
-    res.on('end', () => { if (callback) callback(body); });
-  });
-  req.on('error', (e) => console.error("Error en Sheets:", e));
-  req.write(data);
-  req.end();
+  
+  function realizarPeticion(urlDestino) {
+    const urlObj = new URL(urlDestino);
+    const options = {
+      hostname: urlObj.hostname,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+    };
+    
+    const req = https.request(options, (res) => {
+      // Si Google nos redirige (códigos 301 o 302), seguimos la nueva localización
+      if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
+        // Las redirecciones de Google Apps Script suelen convertirse en peticiones GET
+        https.get(res.headers.location, (resGet) => {
+          let bodyGet = '';
+          resGet.on('data', chunk => bodyGet += chunk);
+          resGet.on('end', () => { if (callback) callback(bodyGet); });
+        }).on('error', (e) => console.error("Error en redirección:", e));
+        return;
+      }
+      
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => { if (callback) callback(body); });
+    });
+    
+    req.on('error', (e) => console.error("Error en Sheets:", e));
+    req.write(data);
+    req.end();
+  }
+  
+  realizarPeticion(URL_SHEET);
 }
 
 function checkTelegram() {
@@ -59,7 +78,7 @@ function checkTelegram() {
 function manejarMensaje(message) {
   const chatId = message.chat.id;
   const texto = message.text.trim();
-  const userIdSeguro = String(chatId); // Usamos el ID de chat como identificador único estable
+  const userIdSeguro = String(chatId);
 
   if (texto.toLowerCase() === '/start' || texto.toLowerCase() === 'hola') {
     estadoUsuarios[chatId] = { fase: 'esperando_alimento' };
