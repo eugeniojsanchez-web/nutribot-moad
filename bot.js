@@ -8,15 +8,14 @@ const server = http.createServer((req, res) => {
 server.listen(process.env.PORT || 3000);
 
 const token = process.env.TELEGRAM_TOKEN;
-// ⚠️ Coloca aquí tu URL activa de Google Apps Script (la que termina en /exec)
-const URL_SHEET = "https://script.google.com/macros/s/AKfycbzpi8T0Li0v3W6pg0QXxo8-rpT_XXLlWb9n7fQoV2myH2TOXuH4s5RyBRrLEU6-_uaU/exec";
+// ⚠️ REEMPLAZA ESTA URL CON TU URL DE "SIN TÍTULO"
+const URL_SHEET = "TU_URL_DE_APLICACION_WEB";
 
 if (!token) process.exit(1);
 
 let lastUpdateId = 0;
 const estadoUsuarios = {};
 
-// Función de comunicación mejorada para seguir redirecciones de Google
 function comunicacionSheets(payload, callback) {
   const data = JSON.stringify(payload);
   
@@ -30,9 +29,7 @@ function comunicacionSheets(payload, callback) {
     };
     
     const req = https.request(options, (res) => {
-      // Si Google nos redirige (códigos 301 o 302), seguimos la nueva localización
       if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
-        // Las redirecciones de Google Apps Script suelen convertirse en peticiones GET
         https.get(res.headers.location, (resGet) => {
           let bodyGet = '';
           resGet.on('data', chunk => bodyGet += chunk);
@@ -127,9 +124,12 @@ function manejarBoton(callbackQuery) {
     let letra = data.split("_")[1];
     let titulo = "Segmento " + letra;
     const alimento = estadoUsuarios[chatId] ? estadoUsuarios[chatId].alimento : 'Alimento';
-    comunicacionSheets({ action: "registrar", alimento: alimento, segmento: titulo, usuario: userIdSeguro });
-    editarMensaje(chatId, messageId, `✅ *${alimento}* enjaulado en ${titulo}.`);
-    if (estadoUsuarios[chatId]) estadoUsuarios[chatId].fase = 'completado';
+    
+    comunicacionSheets({ action: "registrar", alimento: alimento, segmento: titulo, usuario: userIdSeguro }, (res) => {
+      // Editamos el mensaje solo CUANDO GOOGLE RESPONDA con éxito para asegurar el flujo
+      editarMensaje(chatId, messageId, `✅ *${alimento}* enjaulado en ${titulo}.`);
+      if (estadoUsuarios[chatId]) estadoUsuarios[chatId].fase = 'completado';
+    });
   }
   else if (data.startsWith("act_")) {
     const partes = data.split("_");
