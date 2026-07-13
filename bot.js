@@ -2,7 +2,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 require('dotenv').config();
 
-// Validación de Variables de Entorno obligatorias
 if (!process.env.TELEGRAM_TOKEN || !process.env.URL_SHEET) {
   console.error("❌ ERROR CRÍTICO: Faltan las variables de entorno TELEGRAM_TOKEN o URL_SHEET.");
   process.exit(1);
@@ -13,14 +12,8 @@ const bot = new TelegramBot(token, { polling: true });
 
 console.log("🚀 El servidor de MOAD está activo y escuchando en Telegram...");
 
-// ----------------------------------------------------
-// MEMORIA TEMPORAL PARA FLUJOS DE REGISTRO
-// ----------------------------------------------------
 const userSessions = {};
 
-// ----------------------------------------------------
-// MENÚ PRINCIPAL TECLADO FISICO
-// ----------------------------------------------------
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
@@ -31,9 +24,6 @@ const mainKeyboard = {
   }
 };
 
-// ----------------------------------------------------
-// COMANDO PRINCIPAL /START
-// ----------------------------------------------------
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   delete userSessions[chatId];
@@ -45,18 +35,14 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(chatId, saludo, { parse_mode: "Markdown", ...mainKeyboard });
 });
 
-// ----------------------------------------------------
-// ESCUCHADOR DE TEXTO PRINCIPAL (BOTONES Y FLUJOS)
-// ----------------------------------------------------
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   const username = msg.from.username || msg.from.first_name || "Usuario_MOAD";
 
   if (!text) return;
-  if (text.startsWith('/')) return; // Los comandos se procesan por separado
+  if (text.startsWith('/')) return;
 
-  // --- BOTÓN: CONSULTAR INVENTARIO ---
   if (text === "🔍 Consultar Inventario") {
     try {
       const mensajeEspera = await bot.sendMessage(chatId, "⏳ Conectando con la base de datos de MOAD...");
@@ -66,8 +52,6 @@ bot.on('message', async (msg) => {
 
       if (res.data.status === "success" && res.data.alimentos.length > 0) {
         let listado = `📋 *Inventario Actual MOAD*\n\n`;
-        
-        // Agrupar por segmento
         const grupos = {};
         res.data.alimentos.forEach(item => {
           if (!grupos[item.segmento]) grupos[item.segmento] = [];
@@ -81,7 +65,6 @@ bot.on('message', async (msg) => {
           });
           listado += `\n`;
         }
-        
         bot.sendMessage(chatId, listado, { parse_mode: "Markdown" });
       } else {
         bot.sendMessage(chatId, "✨ El inventario está vacío. ¡Buen trabajo de optimización!");
@@ -93,20 +76,17 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // --- BOTÓN: VER BALANCE DE MERMAS ---
   if (text === "📊 Ver Balance Mermas") {
     ejecutarComandoBalance(chatId);
     return;
   }
 
-  // --- BOTÓN: INICIAR REGISTRO DE COMPRA ---
   if (text === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
     bot.sendMessage(chatId, "✍️ Introduce el *nombre del alimento* o producto:", { parse_mode: "Markdown" });
     return;
   }
 
-  // --- PROCESAMIENTO DEL FLUJO MAQUINA DE ESTADOS (REGISTRO) ---
   const session = userSessions[chatId];
   if (!session) return;
 
@@ -114,7 +94,7 @@ bot.on('message', async (msg) => {
     case "ALIMENTO":
       session.alimento = text;
       session.step = "CANTIDAD";
-      bot.sendMessage(chatId, `¿Qué *cantidad* de "${text}" vas a registrar? (Introduce solo el número, ej: 3 o 1.5):`, { parse_mode: "Markdown" });
+      bot.sendMessage(chatId, `¿Qué *cantidad* de "${text}" vas a registrar? (Introduce solo el número):`);
       break;
 
     case "CANTIDAD":
@@ -125,13 +105,13 @@ bot.on('message', async (msg) => {
       }
       session.cantidad = cantNum;
       session.step = "UNIDAD";
-      bot.sendMessage(chatId, "Indica la *unidad de medida* (ej: Uds, Kg, Litros, Paquetes):", { parse_mode: "Markdown" });
+      bot.sendMessage(chatId, "Indica la *unidad de medida* (ej: Uds, Kg, Litros):");
       break;
 
     case "UNIDAD":
       session.unidad = text;
       session.step = "PRECIO";
-      bot.sendMessage(chatId, `Introduce el *precio por unidad* (ej: 1.25 o 0 si no lo recuerdas):`, { parse_mode: "Markdown" });
+      bot.sendMessage(chatId, `Introduce el *precio por unidad* (o 0 si no lo recuerdas):`);
       break;
 
     case "PRECIO":
@@ -141,38 +121,77 @@ bot.on('message', async (msg) => {
         return;
       }
       session.precio = precioNum;
-      session.step = "SEGMENTO";
+      session.step = "CADUCIDAD_OPCION";
       
-      // Teclado inline para seleccionar almacenamiento
-      const opcionesSegmento = {
+      const opcionesCaducidad = {
         reply_markup: {
           inline_keyboard: [
-            [{ text: "🥦 Nevera", callback_data: "seg_Nevera" }],
-            [{ text: "📦 Despensa", callback_data: "seg_Despensa" }],
-            [{ text: "❄️ Congelador", callback_data: "seg_Congelador" }]
+            [{ text: "🤖 Cálculo automático (MOAD)", callback_data: "cad_auto" }],
+            [{ text: "🗓️ Introducir fecha del envase", callback_data: "cad_manual" }]
           ]
         }
       };
-      bot.sendMessage(chatId, "Selecciona la *zona de conservación* de MOAD destino:", { parse_mode: "Markdown", ...opcionesSegmento });
+      bot.sendMessage(chatId, "⚙️ *Fecha de caducidad:* ¿Cómo deseas establecerla?", { parse_mode: "Markdown", ...opcionesCaducidad });
+      break;
+
+    case "CADUCIDAD_MANUAL":
+      // Validar formato básico de fecha (DD/MM o DD/MM/AAAA)
+      const fechaRegex = /^(\d{1,2})\/(\d{1,2})(\/(\d{4}))?$/;
+      if (!fechaRegex.test(text)) {
+        bot.sendMessage(chatId, "⚠️ Formato inválido. Por favor escribe la fecha como *DD/MM* (ej: 25/07) o *DD/MM/AAAA* (ej: 25/07/2026):", { parse_mode: "Markdown" });
+        return;
+      }
+      
+      session.fechaManual = text; 
+      session.step = "SEGMENTO";
+      solicitarSegmento(chatId);
       break;
   }
 });
 
-// ----------------------------------------------------
-// MANEJADOR DE EVENTOS DE BOTONES INLINE (CALLBACK QUERIES)
-// ----------------------------------------------------
+function solicitarSegmento(chatId) {
+  const opcionesSegmento = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🥦 Nevera", callback_data: "seg_Nevera" }],
+        [{ text: "📦 Despensa", callback_data: "seg_Despensa" }],
+        [{ text: "❄️ Congelador", callback_data: "seg_Congelador" }]
+      ]
+    }
+  };
+  bot.sendMessage(chatId, "Selecciona la *zona de conservación* de MOAD destino:", { parse_mode: "Markdown", ...opcionesSegmento });
+}
+
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const username = query.from.username || query.from.first_name || "Usuario_MOAD";
+  const session = userSessions[chatId];
 
-  // Manejar el paso del Segmento en el registro de compra
+  if (!session) return;
+
+  // Manejar selección de tipo de caducidad
+  if (data.startsWith("cad_")) {
+    bot.answerCallbackQuery(query.id);
+    if (data === "cad_auto") {
+      session.fechaManual = "AUTO"; // Indica a Google Sheets que calcule automáticamente
+      session.step = "SEGMENTO";
+      bot.editMessageText("🤖 Elegido: Cálculo automático del sistema.", { chat_id: chatId, message_id: query.message.message_id });
+      solicitarSegmento(chatId);
+    } else if (data === "cad_manual") {
+      session.step = "CADUCIDAD_MANUAL";
+      bot.editMessageText("🗓️ Elegido: Fecha manual del envase.", { chat_id: chatId, message_id: query.message.message_id });
+      bot.sendMessage(chatId, "✍️ Escribe la fecha de caducidad en formato *DD/MM* o *DD/MM/AAAA* (ej: 28/07):", { parse_mode: "Markdown" });
+    }
+    return;
+  }
+
+  // Manejar selección de Segmento y envío definitivo
   if (data.startsWith("seg_")) {
     const segmentoElegido = data.split("_")[1];
-    const session = userSessions[chatId];
     
-    if (!session || session.step !== "SEGMENTO") {
-      bot.answerCallbackQuery(query.id, { text: "Sesión expirada o inválida." });
+    if (session.step !== "SEGMENTO") {
+      bot.answerCallbackQuery(query.id, { text: "Sesión inválida." });
       return;
     }
 
@@ -187,7 +206,8 @@ bot.on('callback_query', async (query) => {
         cantidad: session.cantidad,
         unidad: session.unidad,
         precio: session.precio,
-        segmento: segmentoElegido
+        segmento: segmentoElegido,
+        fechaCaducidad: session.fechaManual // Enviamos "AUTO" o la fecha escrita "DD/MM/AAAA"
       };
 
       const res = await axios.post(process.env.URL_SHEET, payload);
@@ -205,34 +225,21 @@ bot.on('callback_query', async (query) => {
       }
     } catch (err) {
       console.error(err);
-      bot.sendMessage(chatId, "❌ Error de conexión de red con el motor de Google.");
+      bot.sendMessage(chatId, "❌ Error de conexión con el motor de Google.");
     } finally {
       delete userSessions[chatId];
     }
   }
 });
 
-// ----------------------------------------------------
-// MANEJADOR EXCLUSIVO DEL COMANDO /BALANCE
-// ----------------------------------------------------
-bot.onText(/\/balance/, (msg) => {
-  ejecutarComandoBalance(msg.chat.id);
-});
-
-// ----------------------------------------------------
-// FUNCIÓN CENTRALIZADA PARA EJECUTAR EL REPORTE DE BALANCE
-// ----------------------------------------------------
 async function ejecutarComandoBalance(chatId) {
   try {
     const mensajeEspera = await bot.sendMessage(chatId, "📊 Calculando indicadores financieros y mermas de MOAD...");
-    
     const response = await axios.post(process.env.URL_SHEET, { action: "balance" });
-    
     await bot.deleteMessage(chatId, mensajeEspera.message_id);
 
     if (response.data.status === "success") {
       const b = response.data.balance;
-      
       const dineroSalvado = b.dineroSalvado.toFixed(2);
       const dineroPerdido = b.dineroPerdido.toFixed(2);
       const totalInvertido = (b.dineroSalvado + b.dineroPerdido).toFixed(2);
@@ -249,13 +256,9 @@ async function ejecutarComandoBalance(chatId) {
                            `🧮 Total invertido analizado: *${totalInvertido} €*\n\n` +
                            `🎯 *Tasa de Eficiencia Doméstica: ${tasaEficiencia}%*\n`;
 
-      if (tasaEficiencia >= 90) {
-        mensajeReporte += `🏆 ¡Excelente gestión! Estás rozando el residuo cero en cocina.\n\n`;
-      } else if (tasaEficiencia >= 70) {
-        mensajeReporte += `👍 Buen trabajo, pero la analítica muestra margen de optimización.\n\n`;
-      } else {
-        mensajeReporte += `⚠️ Atención: Las mermas están elevadas. Prioriza los avisos diarios.\n\n`;
-      }
+      if (tasaEficiencia >= 90) mensajeReporte += `🏆 ¡Excelente gestión! Estás rozando el residuo cero en cocina.\n\n`;
+      else if (tasaEficiencia >= 70) mensajeReporte += `👍 Buen trabajo, pero la analítica muestra margen de optimización.\n\n`;
+      else mensajeReporte += `⚠️ Atención: Las mermas están elevadas. Prioriza los avisos diarios.\n\n`;
 
       if (b.itemsDesperdiciados.length > 0) {
         const listaCritica = b.itemsDesperdiciados.slice(-5).join("\n• ");
@@ -265,12 +268,11 @@ async function ejecutarComandoBalance(chatId) {
       }
 
       await bot.sendMessage(chatId, mensajeReporte, { parse_mode: "Markdown" });
-      
     } else {
-      await bot.sendMessage(chatId, "❌ No se pudo extraer la analítica de la base de datos.");
+      await bot.sendMessage(chatId, "❌ No se pudo extraer la analítica.");
     }
   } catch (error) {
     console.error(error);
-    bot.sendMessage(chatId, "❌ Error crítico al compilar el balance de mermas.");
+    bot.sendMessage(chatId, "❌ Error crítico al compilar el balance.");
   }
 }
