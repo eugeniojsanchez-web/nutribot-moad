@@ -1,11 +1,24 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const http = require('http'); 
 require('dotenv').config();
 
 if (!process.env.TELEGRAM_TOKEN || !process.env.URL_SHEET) {
   console.error("❌ ERROR CRÍTICO: Faltan las variables de entorno TELEGRAM_TOKEN o URL_SHEET.");
   process.exit(1);
 }
+
+// =================================================================
+// 🌐 MINI-SERVIDOR PARA EVITAR EL TIMEOUT DE RENDER (PUERTO WEB)
+// =================================================================
+const PORT = process.env.PORT || 10000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('MOAD Gestion Domestica Activa\n');
+}).listen(PORT, () => {
+  console.log(`🌐 Servidor web de mantenimiento escuchando en el puerto ${PORT}`);
+});
+// =================================================================
 
 const token = process.env.TELEGRAM_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
@@ -14,7 +27,7 @@ console.log("🚀 El servidor de MOAD está activo y escuchando en Telegram...")
 
 const userSessions = {};
 
-// Teclado principal con el nuevo botón de gestión directa
+// Teclado principal con el botón de gestión directa
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
@@ -91,7 +104,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 4. NUEVO: GESTIONAR CONSUMO/MERMA DESDE BOTÓN
+  // 4. GESTIONAR CONSUMO/MERMA DESDE BOTÓN
   if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
     delete userSessions[chatId];
     const opcionesZona = {
