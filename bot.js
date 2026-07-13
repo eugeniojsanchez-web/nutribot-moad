@@ -8,7 +8,7 @@ if (!process.env.TELEGRAM_TOKEN || !process.env.URL_SHEET) {
   process.exit(1);
 }
 
-// Mini-servidor para evitar que Render tumbe la app
+// Servidor para que Render mantenga la app activa
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -22,7 +22,7 @@ const bot = new TelegramBot(token, { polling: true });
 
 const userSessions = {};
 
-// Teclado principal con la sección de analítica avanzada
+// Teclado principal
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
@@ -127,7 +127,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // OPTIMIZACIÓN Y ANÁLISIS DE CESTA DE LA COMPRA
+  // OPTIMIZACIÓN Y ANÁLISIS
   if (text === "📊 Optimizar Cesta (IA)") {
     const tAnalisis = {
       reply_markup: {
@@ -137,11 +137,11 @@ bot.on('message', async (msg) => {
         ]
       }
     };
-    bot.sendMessage(chatId, "📊 *Inteligencia de Consumo e Inventario*\n\nSelecciona la ventana temporal para evaluar las estadísticas familiares y calcular necesidades de compra:", { parse_mode: "Markdown", ...tAnalisis });
+    bot.sendMessage(chatId, "📊 *Inteligencia de Consumo e Inventario*\n\nSelecciona la ventana temporal para evaluar el historial y calcular necesidades de reposición:", { parse_mode: "Markdown", ...tAnalisis });
     return;
   }
 
-  // CONTROLADORES DE TEXTO EN FLUJOS ACTIVOS
+  // CONTROLADORES DE TEXTO DE FLUJOS PASO A PASO
   const session = userSessions[chatId];
   if (!session) return;
 
@@ -180,7 +180,7 @@ bot.on('message', async (msg) => {
       const rNum = parseFloat(text.replace(',', '.'));
       if (isNaN(rNum)) return bot.sendMessage(chatId, "⚠️ Cantidad incorrecta. Introduce un número:");
       session.cantidadRetirar = rNum; session.step = "RETIRAR_DESTINO";
-      const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciat/Merma", callback_data: "dest_Desperdiciado" }]] } };
+      const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciado/Merma", callback_data: "dest_Desperdiciado" }]] } };
       bot.sendMessage(chatId, `Destino para ${rNum} unidades:`, opDest);
       return;
     }
@@ -191,7 +191,7 @@ bot.on('message', async (msg) => {
     }
   } catch(err) {
     console.error("Fallo controlado en lectura de texto: ", err.message);
-    bot.sendMessage(chatId, "⚠️ Ocurrió un error procesando el texto. Cancelando operación.", mainKeyboard);
+    bot.sendMessage(chatId, "⚠️ Ocurrió un error procesando los datos. Operación cancelada.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
@@ -201,7 +201,7 @@ function solicitarSegmento(chatId) {
   bot.sendMessage(chatId, "Zona destino:", opSeg);
 }
 
-// --- CALLBACK QUERIES ---
+// --- CALLBACK QUERIES (BOTONES INLINE) ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
@@ -269,12 +269,12 @@ bot.on('callback_query', async (query) => {
       }
     } catch (err) {
       console.error("Error analítico evitado:", err.message);
-      bot.sendMessage(chatId, "⚠️ El análisis falló temporalmente debido a datos insuficientes o celdas corruptas en la hoja.", mainKeyboard);
+      bot.sendMessage(chatId, "⚠️ El análisis falló temporalmente debido a datos insuficientes en la hoja.", mainKeyboard);
     }
     return;
   }
 
-  // ALTA INVENTARIO CONTINUACIÓN
+  // FILTRADO DE BAJAS POR ZONA
   if (data.startsWith("bajaZona_")) {
     bot.answerCallbackQuery(query.id);
     const zElegida = data.split("_")[1];
@@ -296,6 +296,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // RECETAS URGENTES
   if (data === "rec_urgente") {
     bot.answerCallbackQuery(query.id);
     try {
@@ -340,14 +341,52 @@ bot.on('callback_query', async (query) => {
   try {
     if (data.startsWith("cad_")) {
       bot.answerCallbackQuery(query.id);
-      if (data === "cad_auto") { session.fechaManual = "AUTO"; session.step = "SEGMENTO"; solicitarSegmento(chatId); }
-      else { session.step = "CADUCIDAD_MANUAL"; bot.sendMessage(chatId, "Escribe la fecha (DD/MM):"); }
+      if (data === "cad_auto") { 
+        session.fechaManual = "AUTO"; 
+        session.step = "SEGMENTO"; 
+        solicitarSegmento(chatId); 
+      } else { 
+        session.step = "CADUCIDAD_MANUAL"; 
+        bot.sendMessage(chatId, "Escribe la fecha (formato DD/MM o DD/MM/AAAA):"); 
+      }
       return;
     }
 
     if (data.startsWith("seg_")) {
       bot.answerCallbackQuery(query.id);
-      const payload = { action: "registrar", usuario: username, alimento: session.alimento, cantidad: session.cantidad, unidad: session.unidad, precio: session.precio, segmento: data.split("_")[1], fechaCaducidad: session.fechaManual };
+      const zonaElegida = data.split("_")[1];
+      
+      let fechaEnvio = "AUTO";
+      
+      // PARSEO INTERNACIONALIZADO DE FECHA EN NODE.JS (Evita cuelgues en Sheets)
+      if (session.fechaManual && session.fechaManual !== "AUTO") {
+        try {
+          const partes = session.fechaManual.split('/');
+          const dia = parseInt(partes[0], 10);
+          const mes = parseInt(partes[1], 10) - 1;
+          const anio = partes[2] ? parseInt(partes[2], 10) : new Date().getFullYear();
+          
+          const objetoFecha = new Date(anio, mes, dia);
+          if (!isNaN(objetoFecha.getTime())) {
+            fechaEnvio = objetoFecha.toISOString().split('T')[0]; // Envía estrictamente "AAAA-MM-DD"
+          }
+        } catch (e) {
+          console.error("Error formateando fecha en Node:", e.message);
+          fechaEnvio = "AUTO";
+        }
+      }
+
+      const payload = { 
+        action: "registrar", 
+        usuario: username, 
+        alimento: session.alimento, 
+        cantidad: session.cantidad, 
+        unidad: session.unidad, 
+        precio: session.precio, 
+        segmento: zonaElegida, 
+        fechaCaducidad: fechaEnvio 
+      };
+
       await axios.post(process.env.URL_SHEET, payload);
       bot.sendMessage(chatId, "✅ Alimento registrado correctamente en el inventario.", mainKeyboard);
       delete userSessions[chatId];
@@ -363,7 +402,7 @@ bot.on('callback_query', async (query) => {
     }
   } catch(err) {
     console.error("Fallo controlado en Callbacks: ", err.message);
-    bot.sendMessage(chatId, "⚠️ Error al procesar la selección del menú. Operación cancelada.", mainKeyboard);
+    bot.sendMessage(chatId, "⚠️ Error al procesar la solicitud con Google Sheets. Operación cancelada.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
