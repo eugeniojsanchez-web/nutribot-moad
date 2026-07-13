@@ -8,13 +8,27 @@ if (!process.env.TELEGRAM_TOKEN || !process.env.URL_SHEET) {
   process.exit(1);
 }
 
-// Servidor para que Render mantenga la app activa
+// Configuración de Axios con timeout de seguridad (10 segundos) para evitar bloqueos
+const api = axios.create({
+  timeout: 10000,
+  headers: { 'Content-Type': 'application/json' }
+});
+
+// Captura de seguridad global para evitar que CUALQUIER error tire el proceso de Node.js
+process.on('uncaughtException', (err) => {
+  console.error('🚨 [Error Global Capturado para Evitar Caída]:', err.message);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 [Promesa Rechazada Capturada]:', reason);
+});
+
+// Servidor para Render
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('MOAD Gestion Domestica Activa\n');
 }).listen(PORT, () => {
-  console.log(`🌐 Servidor web escuchando en el puerto ${PORT}`);
+  console.log(`🌐 Servidor web activo en el puerto ${PORT}`);
 });
 
 const token = process.env.TELEGRAM_TOKEN;
@@ -22,7 +36,6 @@ const bot = new TelegramBot(token, { polling: true });
 
 const userSessions = {};
 
-// Teclado principal
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
@@ -48,10 +61,19 @@ const RECETARIO_MOAD = {
   ]
 };
 
+// Función auxiliar para enviar mensajes de forma segura
+async function safeSendMessage(chatId, text, options = {}) {
+  try {
+    return await bot.sendMessage(chatId, text, options);
+  } catch (e) {
+    console.error("Fallo al enviar mensaje por Telegram:", e.message);
+  }
+}
+
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   delete userSessions[chatId];
-  bot.sendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar, gestionar mermas o calcular ritmos de reabastecimiento.", { parse_mode: "Markdown", ...mainKeyboard });
+  safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para gestionar tu inventario sin riesgo de desconexión.", { parse_mode: "Markdown", ...mainKeyboard });
 });
 
 bot.on('message', async (msg) => {
@@ -64,9 +86,9 @@ bot.on('message', async (msg) => {
   // LECTURA INVENTARIO
   if (text === "🔍 Consultar Inventario") {
     try {
-      const msgWait = await bot.sendMessage(chatId, "⏳ Consultando base de datos de MOAD...");
-      const res = await axios.post(process.env.URL_SHEET, { action: "leer" });
-      await bot.deleteMessage(chatId, msgWait.message_id);
+      const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos de MOAD...");
+      const res = await api.post(process.env.URL_SHEET, { action: "leer" });
+      if (msgWait) { try { await bot.deleteMessage(chatId, msgWait.message_id); } catch(dErr){} }
 
       if (res.data && res.data.status === "success" && Array.isArray(res.data.alimentos) && res.data.alimentos.length > 0) {
         let listado = `📋 *Inventario Actual MOAD*\n\n`;
@@ -81,12 +103,12 @@ bot.on('message', async (msg) => {
           grupos[seg].forEach(item => { listado += `• *${item.alimento}*: ${item.cantRestante} ${item.unidad}\n`; });
           listado += `\n`;
         }
-        bot.sendMessage(chatId, listado, { parse_mode: "Markdown" });
+        safeSendMessage(chatId, listado, { parse_mode: "Markdown" });
       } else {
-        bot.sendMessage(chatId, "✨ Inventario vacío.");
+        safeSendMessage(chatId, "✨ Inventario vacío.");
       }
     } catch (e) { 
-      bot.sendMessage(chatId, "❌ No se pudo conectar con la base de datos."); 
+      safeSendMessage(chatId, "❌ La consulta tardó demasiado o la base de datos no responde."); 
     }
     return;
   }
@@ -94,14 +116,14 @@ bot.on('message', async (msg) => {
   // BALANCE MERMAS
   if (text === "📈 Ver Balance Mermas") {
     try {
-      const res = await axios.post(process.env.URL_SHEET, { action: "balance" });
+      const res = await api.post(process.env.URL_SHEET, { action: "balance" });
       if (res.data && res.data.balance) {
-        bot.sendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown" });
+        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown" });
       } else {
-        bot.sendMessage(chatId, "⚠️ No se han podido obtener los balances.");
+        safeSendMessage(chatId, "⚠️ No se han podido calcular los balances actuales.");
       }
     } catch(err) {
-      bot.sendMessage(chatId, "❌ Error al obtener el balance de mermas.");
+      safeSendMessage(chatId, "❌ Error al obtener balance de mermas.");
     }
     return;
   }
@@ -109,25 +131,25 @@ bot.on('message', async (msg) => {
   // REGISTRAR COMPRA
   if (text === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
-    bot.sendMessage(chatId, "✍️ Escribe el nombre del alimento:");
+    safeSendMessage(chatId, "✍️ Escribe el nombre del alimento:");
     return;
   }
 
   // GESTIONAR BAJAS
   if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
     const mBaja = { reply_markup: { inline_keyboard: [[{ text: "🥦 Nevera", callback_data: "bajaZona_Nevera" }], [{ text: "📦 Despensa", callback_data: "bajaZona_Despensa" }], [{ text: "❄️ Congelador", callback_data: "bajaZona_Congelador" }]] } };
-    bot.sendMessage(chatId, "¿De qué zona de conservación vas a retirar el alimento?", mBaja);
+    safeSendMessage(chatId, "¿De qué zona de conservación vas a retirar el alimento?", mBaja);
     return;
   }
 
   // MENÚ RECETAS
   if (text === "🥗 Menú Recetas") {
     const tRec = { reply_markup: { inline_keyboard: [[{ text: "🚨 Uso Inmediato", callback_data: "rec_urgente" }], [{ text: "🍲 Ideas por Zona", callback_data: "rec_zona" }], [{ text: "✨ Receta con Sobras", callback_data: "rec_sobras" }]] } };
-    bot.sendMessage(chatId, "🥗 *Planificación y Aprovechamiento:*", tRec);
+    safeSendMessage(chatId, "🥗 *Planificación y Aprovechamiento:*", tRec);
     return;
   }
 
-  // OPTIMIZACIÓN Y ANÁLISIS
+  // OPTIMIZACIÓN
   if (text === "📊 Optimizar Cesta (IA)") {
     const tAnalisis = {
       reply_markup: {
@@ -137,38 +159,38 @@ bot.on('message', async (msg) => {
         ]
       }
     };
-    bot.sendMessage(chatId, "📊 *Inteligencia de Consumo e Inventario*\n\nSelecciona la ventana temporal para evaluar el historial y calcular necesidades de reposición:", { parse_mode: "Markdown", ...tAnalisis });
+    safeSendMessage(chatId, "📊 *Inteligencia de Consumo*\n\nSelecciona la ventana temporal para evaluar existencias:", { parse_mode: "Markdown", ...tAnalisis });
     return;
   }
 
-  // CONTROLADORES DE TEXTO DE FLUJOS PASO A PASO
+  // CONTROLADORES DE FLUJOS PASO A PASO
   const session = userSessions[chatId];
   if (!session) return;
 
   try {
     if (session.step === "ALIMENTO") {
       session.alimento = text; session.step = "CANTIDAD";
-      bot.sendMessage(chatId, `¿Cantidad para "${text}"? (Solo número):`);
+      safeSendMessage(chatId, `¿Cantidad para "${text}"? (Solo número):`);
       return;
     }
     if (session.step === "CANTIDAD") {
       const cNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(cNum)) return bot.sendMessage(chatId, "⚠️ Número no válido. Introduce un número:");
+      if (isNaN(cNum)) return safeSendMessage(chatId, "⚠️ Número no válido. Introduce un número:");
       session.cantidad = cNum; session.step = "UNIDAD";
-      bot.sendMessage(chatId, "Indica unidad (ej: Kg, Litros, Uds):");
+      safeSendMessage(chatId, "Indica unidad (ej: Kg, Litros, Uds):");
       return;
     }
     if (session.step === "UNIDAD") {
       session.unidad = text; session.step = "PRECIO";
-      bot.sendMessage(chatId, "Introduce precio unitario (o 0):");
+      safeSendMessage(chatId, "Introduce precio unitario (o 0):");
       return;
     }
     if (session.step === "PRECIO") {
       const pNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(pNum)) return bot.sendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número:");
+      if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número:");
       session.precio = pNum; session.step = "CADUCIDAD_OPCION";
       const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
-      bot.sendMessage(chatId, "Establecer caducidad:", opCad);
+      safeSendMessage(chatId, "Establecer caducidad:", opCad);
       return;
     }
     if (session.step === "CADUCIDAD_MANUAL") {
@@ -178,65 +200,58 @@ bot.on('message', async (msg) => {
     }
     if (session.step === "RETIRAR_CANTIDAD") {
       const rNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(rNum)) return bot.sendMessage(chatId, "⚠️ Cantidad incorrecta. Introduce un número:");
+      if (isNaN(rNum)) return safeSendMessage(chatId, "⚠️ Cantidad incorrecta. Introduce un número:");
       session.cantidadRetirar = rNum; session.step = "RETIRAR_DESTINO";
       const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciado/Merma", callback_data: "dest_Desperdiciado" }]] } };
-      bot.sendMessage(chatId, `Destino para ${rNum} unidades:`, opDest);
+      safeSendMessage(chatId, `Destino para ${rNum} unidades:`, opDest);
       return;
     }
     if (session.step === "INPUT_SOBRAS") {
-      bot.sendMessage(chatId, "🍳 *Respuesta del Chef MOAD:* Con eso haz un salteado rápido en sartén caliente con ajo, pimienta y un huevo batido por encima. Aprovechamiento al 100%.", mainKeyboard);
+      safeSendMessage(chatId, "🍳 *Respuesta del Chef MOAD:* Con eso haz un salteado rápido en sartén caliente con ajo y un huevo batido por encima.", mainKeyboard);
       delete userSessions[chatId];
       return;
     }
   } catch(err) {
-    console.error("Fallo controlado en lectura de texto: ", err.message);
-    bot.sendMessage(chatId, "⚠️ Ocurrió un error procesando los datos. Operación cancelada.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ Ocurrió un error procesando los datos. Cancelando operación.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
 
 function solicitarSegmento(chatId) {
   const opSeg = { reply_markup: { inline_keyboard: [[{ text: "🥦 Nevera", callback_data: "seg_Nevera" }], [{ text: "📦 Despensa", callback_data: "seg_Despensa" }], [{ text: "❄️ Congelador", callback_data: "seg_Congelador" }]] } };
-  bot.sendMessage(chatId, "Zona destino:", opSeg);
+  safeSendMessage(chatId, "Zona destino:", opSeg);
 }
 
-// --- CALLBACK QUERIES (BOTONES INLINE) ---
+// --- CALLBACK QUERIES (BOTONES INLINE CON COMPORTAMIENTO SEGURO) ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const username = query.from.username || query.from.first_name || "Usuario_MOAD";
 
-  // PROCESAMIENTO DE ANÁLISIS TEMPORAL Y GRÁFICOS
+  // Responder siempre al callback inmediatamente para evitar que el botón se quede cargando
+  try { await bot.answerCallbackQuery(query.id); } catch(e){}
+
   if (data.startsWith("an_")) {
-    bot.answerCallbackQuery(query.id);
     const dias = data.split("_")[1];
-    
     try {
-      bot.editMessageText(`📊 Analizando consumos de los últimos *${dias} días*...`, { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" });
+      try { await bot.editMessageText(`📊 Analizando consumos de los últimos *${dias} días*...`, { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }); } catch(mErr){}
       
-      const response = await axios.post(process.env.URL_SHEET, { action: "analis_consumo", diasFiltro: dias });
+      const response = await api.post(process.env.URL_SHEET, { action: "analis_consumo", diasFiltro: dias });
       
       if (response.data && response.data.status === "success" && Array.isArray(response.data.analis) && response.data.analis.length > 0) {
         const datos = response.data.analis;
-        
         let informe = `📊 *Informe de Cesta de la Compra*\n_(Periodo: ${dias} días)_\n\n`;
         let listaCompra = `🚨 *Alertas de Stock Crítico:*\n`;
         let hayAlertas = false;
 
-        const etiquetas = [];
-        const serieConsumo = [];
-        const serieStock = [];
+        const etiquetas = []; const serieConsumo = []; const serieStock = [];
 
         datos.forEach(item => {
           if (!item.alimento) return;
-
           informe += `• *${item.alimento}*: Consumo: ${item.consumido} | Stock: ${item.stock} ${item.unidad}\n`;
-          
           etiquetas.push(item.alimento);
           serieConsumo.push(item.consumido);
           serieStock.push(item.stock);
-
           if (item.alerta) {
             listaCompra += `⚠️ *${item.alimento}* (¡Reponer pronto!)\n`;
             hayAlertas = true;
@@ -255,83 +270,69 @@ bot.on('callback_query', async (query) => {
         };
 
         const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
-        
-        try {
-          await bot.sendPhoto(chatId, chartUrl);
-        } catch (imgErr) {
-          console.error("No se pudo enviar la foto de QuickChart:", imgErr.message);
-        }
-        
+        try { await bot.sendPhoto(chatId, chartUrl); } catch (imgErr) {}
         if (!hayAlertas) listaCompra += "✅ Todo abastecido correctamente.";
-        bot.sendMessage(chatId, `${informe}\n${listaCompra}`, { parse_mode: "Markdown", ...mainKeyboard });
+        
+        safeSendMessage(chatId, `${informe}\n${listaCompra}`, { parse_mode: "Markdown", ...mainKeyboard });
       } else {
-        bot.sendMessage(chatId, "✨ No hay consumos reales (etiquetados como 'Consumido') registrados en este periodo para analizar.", mainKeyboard);
+        safeSendMessage(chatId, "✨ No hay consumos reales registrados en este periodo.", mainKeyboard);
       }
     } catch (err) {
-      console.error("Error analítico evitado:", err.message);
-      bot.sendMessage(chatId, "⚠️ El análisis falló temporalmente debido a datos insuficientes en la hoja.", mainKeyboard);
+      safeSendMessage(chatId, "⚠️ El análisis falló o tardó demasiado en responder.", mainKeyboard);
     }
     return;
   }
 
-  // FILTRADO DE BAJAS POR ZONA
   if (data.startsWith("bajaZona_")) {
-    bot.answerCallbackQuery(query.id);
     const zElegida = data.split("_")[1];
     try {
-      const res = await axios.post(process.env.URL_SHEET, { action: "leer" });
-      if(!res.data || !Array.isArray(res.data.alimentos)) return bot.sendMessage(chatId, "❌ Error leyendo inventario.");
+      const res = await api.post(process.env.URL_SHEET, { action: "leer" });
+      if(!res.data || !Array.isArray(res.data.alimentos)) return safeSendMessage(chatId, "❌ Error leyendo inventario.");
       const filtrados = res.data.alimentos.filter(item => item.segmento === zElegida);
-      if (filtrados.length === 0) return bot.sendMessage(chatId, `No hay stock activo en la zona: ${zElegida}`);
+      if (filtrados.length === 0) return safeSendMessage(chatId, `No hay stock activo en la zona: ${zElegida}`);
       const btns = filtrados.map(item => [{ text: `${item.alimento} (${item.cantRestante} ${item.unidad})`, callback_data: `USAR_${item.idLote}` }]);
-      bot.sendMessage(chatId, "Selecciona producto a retirar:", { reply_markup: { inline_keyboard: btns } });
-    } catch (e) { bot.sendMessage(chatId, "❌ Error de conexión al leer zona."); }
+      safeSendMessage(chatId, "Selecciona producto a retirar:", { reply_markup: { inline_keyboard: btns } });
+    } catch (e) { safeSendMessage(chatId, "❌ Error de conexión al leer la zona elegida."); }
     return;
   }
 
   if (data.startsWith("USAR_")) {
-    bot.answerCallbackQuery(query.id);
     userSessions[chatId] = { step: "RETIRAR_CANTIDAD", idLote: data.replace("USAR_", "") };
-    bot.sendMessage(chatId, "Escribe la cantidad numérica a retirar:");
+    safeSendMessage(chatId, "Escribe la cantidad numérica a retirar:");
     return;
   }
 
-  // RECETAS URGENTES
   if (data === "rec_urgente") {
-    bot.answerCallbackQuery(query.id);
     try {
-      const res = await axios.post(process.env.URL_SHEET, { action: "recetas_proximas" });
+      const res = await api.post(process.env.URL_SHEET, { action: "recetas_proximas" });
       if(res.data && Array.isArray(res.data.sugerencias) && res.data.sugerencias.length > 0) {
         let msg = "🚨 *Prioridad de gasto por caducidad:*\n\n";
         res.data.sugerencias.forEach(i => { msg += `• *${i.alimento}* (Quedan ${i.dias} días)\n`; });
-        bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
+        safeSendMessage(chatId, msg, { parse_mode: "Markdown" });
       } else {
-        bot.sendMessage(chatId, "✅ No hay alimentos próximos a caducar.");
+        safeSendMessage(chatId, "✅ No hay alimentos próximos a caducar.");
       }
-    } catch(e) { bot.sendMessage(chatId, "❌ Error consultando alertas de caducidad."); }
+    } catch(e) { safeSendMessage(chatId, "❌ Error al consultar alertas."); }
     return;
   }
 
   if (data === "rec_zona") {
-    bot.answerCallbackQuery(query.id);
     const mZ = { reply_markup: { inline_keyboard: [[{ text: "Nevera", callback_data: "vRZ_Nevera" }], [{ text: "Despensa", callback_data: "vRZ_Despensa" }]] } };
-    bot.sendMessage(chatId, "Elige zona para ver ideas de recetas:", mZ);
+    safeSendMessage(chatId, "Elige zona para ver ideas de recetas:", mZ);
     return;
   }
 
   if (data.startsWith("vRZ_")) {
-    bot.answerCallbackQuery(query.id);
     const recs = RECETARIO_MOAD[data.split("_")[1]] || [];
     let msgR = "🍲 *Ideas de platos:*\n\n";
     recs.forEach(r => { msgR += `*${r.plato}*:\n_${r.prep}_\n\n`; });
-    bot.sendMessage(chatId, msgR, { parse_mode: "Markdown" });
+    safeSendMessage(chatId, msgR, { parse_mode: "Markdown" });
     return;
   }
 
   if (data === "rec_sobras") {
-    bot.answerCallbackQuery(query.id);
     userSessions[chatId] = { step: "INPUT_SOBRAS" };
-    bot.sendMessage(chatId, "Dime qué ingredientes tienes sueltos separados por comas:");
+    safeSendMessage(chatId, "Dime qué ingredientes tienes sueltos separados por comas:");
     return;
   }
 
@@ -340,69 +341,48 @@ bot.on('callback_query', async (query) => {
 
   try {
     if (data.startsWith("cad_")) {
-      bot.answerCallbackQuery(query.id);
       if (data === "cad_auto") { 
-        session.fechaManual = "AUTO"; 
-        session.step = "SEGMENTO"; 
-        solicitarSegmento(chatId); 
+        session.fechaManual = "AUTO"; session.step = "SEGMENTO"; solicitarSegmento(chatId); 
       } else { 
-        session.step = "CADUCIDAD_MANUAL"; 
-        bot.sendMessage(chatId, "Escribe la fecha (formato DD/MM o DD/MM/AAAA):"); 
+        session.step = "CADUCIDAD_MANUAL"; safeSendMessage(chatId, "Escribe la fecha (formato DD/MM o DD/MM/AAAA):"); 
       }
       return;
     }
 
     if (data.startsWith("seg_")) {
-      bot.answerCallbackQuery(query.id);
       const zonaElegida = data.split("_")[1];
-      
       let fechaEnvio = "AUTO";
       
-      // PARSEO INTERNACIONALIZADO DE FECHA EN NODE.JS (Evita cuelgues en Sheets)
       if (session.fechaManual && session.fechaManual !== "AUTO") {
         try {
           const partes = session.fechaManual.split('/');
           const dia = parseInt(partes[0], 10);
           const mes = parseInt(partes[1], 10) - 1;
           const anio = partes[2] ? parseInt(partes[2], 10) : new Date().getFullYear();
-          
           const objetoFecha = new Date(anio, mes, dia);
           if (!isNaN(objetoFecha.getTime())) {
-            fechaEnvio = objetoFecha.toISOString().split('T')[0]; // Envía estrictamente "AAAA-MM-DD"
+            fechaEnvio = objetoFecha.toISOString().split('T')[0]; 
           }
         } catch (e) {
-          console.error("Error formateando fecha en Node:", e.message);
           fechaEnvio = "AUTO";
         }
       }
 
-      const payload = { 
-        action: "registrar", 
-        usuario: username, 
-        alimento: session.alimento, 
-        cantidad: session.cantidad, 
-        unidad: session.unidad, 
-        precio: session.precio, 
-        segmento: zonaElegida, 
-        fechaCaducidad: fechaEnvio 
-      };
-
-      await axios.post(process.env.URL_SHEET, payload);
-      bot.sendMessage(chatId, "✅ Alimento registrado correctamente en el inventario.", mainKeyboard);
+      const payload = { action: "registrar", usuario: username, alimento: session.alimento, cantidad: session.cantidad, unidad: session.unidad, precio: session.precio, segmento: zonaElegida, fechaCaducidad: fechaEnvio };
+      await api.post(process.env.URL_SHEET, payload);
+      safeSendMessage(chatId, "✅ Alimento registrado correctamente en el inventario.", mainKeyboard);
       delete userSessions[chatId];
       return;
     }
 
     if (data.startsWith("dest_")) {
-      bot.answerCallbackQuery(query.id);
       const payload = { action: "retirar", idLote: session.idLote, cantidadRetirada: session.cantidadRetirar, destino: data.split("_")[1], usuario: username };
-      await axios.post(process.env.URL_SHEET, payload);
-      bot.sendMessage(chatId, "📉 Inventario actualizado y guardado en el historial.", mainKeyboard);
+      await api.post(process.env.URL_SHEET, payload);
+      safeSendMessage(chatId, "📉 Inventario actualizado y guardado en el historial.", mainKeyboard);
       delete userSessions[chatId];
     }
   } catch(err) {
-    console.error("Fallo controlado en Callbacks: ", err.message);
-    bot.sendMessage(chatId, "⚠️ Error al procesar la solicitud con Google Sheets. Operación cancelada.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ La comunicación con la base de datos ha fallado o ha expirado. Inténtalo de nuevo.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
