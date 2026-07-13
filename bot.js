@@ -30,9 +30,54 @@ bot.onText(/\/start/, (msg) => {
   
   const saludo = `🤖 *Entorno MOAD: Gestión Doméstica Activa*\n\n` +
                  `Bienvenido al sistema unificado de optimización de despensa y control de residuos.\n\n` +
-                 `Utiliza los botones inferiores para interactuar con tu inventario de forma inmediata.`;
+                 `• Usa los botones inferiores para registrar compras o consultar el estado global.\n` +
+                 `• Usa los comandos */nevera*, */despensa* o */congelador* para gestionar el consumo o las mermas de una zona específica.`;
                  
   bot.sendMessage(chatId, saludo, { parse_mode: "Markdown", ...mainKeyboard });
+});
+
+// Comandos de acceso a Segmentos para consumir/mermar
+bot.onText(/\/(nevera|despensa|congelador)/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  delete userSessions[chatId];
+  
+  // Normalizar la primera letra en mayúscula para coincidir con Sheets (Nevera, Despensa, Congelador)
+  const segmentoAnclado = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+  
+  try {
+    const mensajeEspera = await bot.sendMessage(chatId, `🔍 Buscando existencias en *${segmentoAnclado}*...`, { parse_mode: "Markdown" });
+    const res = await axios.post(process.env.URL_SHEET, { action: "leer" });
+    await bot.deleteMessage(chatId, mensajeEspera.message_id);
+
+    if (res.data.status === "success" && res.data.alimentos.length > 0) {
+      // Filtrar solo los del segmento solicitado
+      const filtrados = res.data.alimentos.filter(item => item.segmento === segmentoAnclado);
+      
+      if (filtrados.length === 0) {
+        bot.sendMessage(chatId, `✨ No hay stock registrado en *${segmentoAnclado}*.`, { parse_mode: "Markdown" });
+        return;
+      }
+
+      // Crear un botón interactivo por cada producto en stock
+      const botones = filtrados.map(item => {
+        return [{
+          text: `• ${item.alimento} (${item.cantRestante} ${item.unidad})`,
+          callback_data: `USAR_${item.idLote}`
+        }];
+      });
+
+      bot.sendMessage(chatId, `📍 *Gestión de ${segmentoAnclado}:* Selecciona el producto que vas a retirar o dar de baja:`, {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: botones }
+      });
+
+    } else {
+      bot.sendMessage(chatId, "✨ El inventario global de MOAD está vacío.");
+    }
+  } catch (err) {
+    console.error(err);
+    bot.sendMessage(chatId, "❌ Error al acceder al inventario de la zona.");
+  }
 });
 
 bot.on('message', async (msg) => {
@@ -42,7 +87,7 @@ bot.on('message', async (msg) => {
   if (!text) return;
   if (text.startsWith('/')) return;
 
-  // 1. CONSULTAR INVENTARIO
+  // 1. CONSULTAR INVENTARIO GLOBAL
   if (text === "🔍 Consultar Inventario") {
     try {
       const mensajeEspera = await bot.sendMessage(chatId, "⏳ Conectando con la base de datos de MOAD...");
@@ -82,17 +127,18 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 3. INICIAR REGISTRO
+  // 3. INICIAR REGISTRO DE COMPRA
   if (text === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
     bot.sendMessage(chatId, "✍️ Introduce el *nombre del alimento* o producto:", { parse_mode: "Markdown" });
     return;
   }
 
-  // --- FLUJO DE REGISTRO EN PASOS ---
+  // --- CONTROLADOR DE SESIONES ACTIVAS (MENSAJES DE TEXTO) ---
   const session = userSessions[chatId];
   if (!session) return;
 
+  // FLUJO COMPRA: Alimento
   if (session.step === "ALIMENTO") {
     session.alimento = text;
     session.step = "CANTIDAD";
@@ -100,6 +146,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // FLUJO COMPRA: Cantidad
   if (session.step === "CANTIDAD") {
     const cantNum = parseFloat(text.replace(',', '.'));
     if (isNaN(cantNum) || cantNum <= 0) {
@@ -112,6 +159,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // FLUJO COMPRA: Unidad
   if (session.step === "UNIDAD") {
     session.unidad = text;
     session.step = "PRECIO";
@@ -119,6 +167,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // FLUJO COMPRA: Precio
   if (session.step === "PRECIO") {
     const precioNum = parseFloat(text.replace(',', '.'));
     if (isNaN(precioNum) || precioNum < 0) {
@@ -140,6 +189,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // FLUJO COMPRA: Fecha Manual
   if (session.step === "CADUCIDAD_MANUAL") {
     const fechaRegex = /^(\d{1,2})\/(\d{1,2})(\/(\d{4}))?$/;
     if (!fechaRegex.test(text)) {
@@ -149,6 +199,29 @@ bot.on('message', async (msg) => {
     session.fechaManual = text; 
     session.step = "SEGMENTO";
     solicitarSegmento(chatId);
+    return;
+  }
+
+  // FLUJO RETIRAR/BAJA: Capturar Cantidad a Usar
+  if (session.step === "RETIRAR_CANTIDAD") {
+    const cantidadRetirar = parseFloat(text.replace(',', '.'));
+    if (isNaN(cantidadRetirar) || cantidadRetirar <= 0) {
+      bot.sendMessage(chatId, "⚠️ Introduce un número válido y mayor a 0 para la cantidad a retirar:");
+      return;
+    }
+    
+    session.cantidadRetirar = cantidadRetirar;
+    session.step = "RETIRAR_DESTINO";
+
+    const opcionesDestino = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🍳 Consumido (Aprovechado)", callback_data: "dest_Consumido" }],
+          [{ text: "🗑️ Desperdiçado / Merma", callback_data: "dest_Desperdiciado" }]
+        ]
+      }
+    };
+    bot.sendMessage(chatId, `¿Cuál es el destino de estos *${cantidadRetirar}* del producto?`, { parse_mode: "Markdown", ...opcionesDestino });
     return;
   }
 });
@@ -166,15 +239,34 @@ function solicitarSegmento(chatId) {
   bot.sendMessage(chatId, "Selecciona la *zona de conservación* de MOAD destino:", { parse_mode: "Markdown", ...opcionesSegmento });
 }
 
+// --- MANEJADOR DE CALLBACK QUERIES (BOTONES INTERACTIVOS) ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const username = query.from.username || query.from.first_name || "Usuario_MOAD";
-  const session = userSessions[chatId];
+  
+  // A) Si seleccionamos un producto para retirar (/nevera, /despensa, /congelador)
+  if (data.startsWith("USAR_")) {
+    bot.answerCallbackQuery(query.id);
+    const idLoteElegido = data.replace("USAR_", "");
+    
+    userSessions[chatId] = {
+      step: "RETIRAR_CANTIDAD",
+      idLote: idLoteElegido
+    };
+    
+    bot.editMessageText("🔢 Escribe la *cantidad exacta* que vas a sacar o dar de baja (solo el número):", {
+      chat_id: chatId,
+      message_id: query.message.message_id,
+      parse_mode: "Markdown"
+    });
+    return;
+  }
 
+  const session = userSessions[chatId];
   if (!session) return;
 
-  // Manejar selección de caducidad
+  // B) Flujo Compra: Manejar selección de tipo de caducidad
   if (data.startsWith("cad_")) {
     bot.answerCallbackQuery(query.id);
     if (data === "cad_auto") {
@@ -190,7 +282,7 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Manejar selección de Segmento e ingreso final
+  // C) Flujo Compra: Guardar producto definitivo
   if (data.startsWith("seg_")) {
     const segmentoElegido = data.split("_")[1];
     bot.answerCallbackQuery(query.id);
@@ -212,18 +304,51 @@ bot.on('callback_query', async (query) => {
       const res = await axios.post(process.env.URL_SHEET, payload);
 
       if (res.data.status === "success") {
-        const msgExito = `✅ *Producto Registrado en MOAD*\n\n` +
-                          `• *Alimento*: ${session.alimento}\n` +
-                          `• *Cantidad*: ${session.cantidad} ${session.unidad}\n` +
-                          `• *Ubicación*: ${segmentoElegido}`;
-        
-        bot.sendMessage(chatId, msgExito, { parse_mode: "Markdown", ...mainKeyboard });
+        bot.sendMessage(chatId, `✅ *Producto Registrado en MOAD*\n\n• *Alimento*: ${session.alimento}\n• *Cantidad*: ${session.cantidad} ${session.unidad}\n• *Ubicación*: ${segmentoElegido}`, { parse_mode: "Markdown", ...mainKeyboard });
       } else {
         bot.sendMessage(chatId, "❌ Hubo un inconveniente al guardar en la hoja de cálculo.", mainKeyboard);
       }
     } catch (err) {
       console.error(err);
       bot.sendMessage(chatId, "❌ Error de conexión con el motor de Google.", mainKeyboard);
+    } finally {
+      delete userSessions[chatId];
+    }
+    return;
+  }
+
+  // D) Flujo Retirar: Destino Final (Consumido o Desperdiciado)
+  if (data.startsWith("dest_")) {
+    const destinoElegido = data.split("_")[1];
+    bot.answerCallbackQuery(query.id);
+
+    if (session.step !== "RETIRAR_DESTINO") return;
+
+    try {
+      bot.editMessageText(`⏳ Procesando baja en el historial...`, { chat_id: chatId, message_id: query.message.message_id });
+
+      const payload = {
+        action: "retirar",
+        idLote: session.idLote,
+        cantidadRetirada: session.cantidadRetirar,
+        destino: destinoElegido,
+        usuario: username
+      };
+
+      const res = await axios.post(process.env.URL_SHEET, payload);
+
+      if (res.data.status === "success") {
+        const msgFinal = `📉 *Inventario Actualizado*\n\n` +
+                         `Se han retirado con éxito *${session.cantidadRetirar}* unidades.\n` +
+                         `📦 Destino registrado: *${destinoElegido}*.\n\n` +
+                         `El balance financiero se ha recalculado automáticamente.`;
+        bot.sendMessage(chatId, msgFinal, { parse_mode: "Markdown", ...mainKeyboard });
+      } else {
+        bot.sendMessage(chatId, `❌ Error: ${res.data.message || "No se pudo procesar la baja."}`, mainKeyboard);
+      }
+    } catch (err) {
+      console.error(err);
+      bot.sendMessage(chatId, "❌ Error al conectar con Google Sheets para efectuar la baja.", mainKeyboard);
     } finally {
       delete userSessions[chatId];
     }
