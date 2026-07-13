@@ -67,7 +67,7 @@ bot.on('message', async (msg) => {
   // Comando de emergencia: Si se escribe /start, se destruye cualquier bloqueo de sesión al instante
   if (text === '/start') {
     delete userSessions[chatId];
-    return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar sin bloqueos.", { parse_mode: "Markdown", ...mainKeyboard });
+    return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los panels inferiores para registrar o gestionar sin bloqueos.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
   // --- CONTROLADORES DEL TECLADO PRINCIPAL ---
@@ -145,7 +145,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // --- PROCESAMIENTO PASO A PASO (FLUJO SECUENCIAL) ---
+  // --- PROCESAMIENTO PASO A PASO (FLUJO SECUENCIAL PROTEGIDO) ---
   const session = userSessions[chatId];
   if (!session) return;
 
@@ -169,7 +169,6 @@ bot.on('message', async (msg) => {
     if (session.step === "UNIDAD") {
       session.unidad = text; 
       session.step = "PRECIO";
-      // MODIFICACIÓN OPCIÓN A: Cambiamos el texto de solicitud para pedir el precio total del lote/pieza comprado
       await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 7 o 0 si es gratis):`);
       return;
     }
@@ -178,13 +177,18 @@ bot.on('message', async (msg) => {
       const pNum = parseFloat(text.replace(',', '.'));
       if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número válido:");
       
-      // Ahora guardamos directamente el coste que costó la pieza entera. 
-      // Si el script de Google Sheets calcula el precio unitario, lo resolverá haciendo (precio / cantidad) internamente.
       session.precio = pNum; 
-      session.step = "CADUCIDAD_OPCION";
+      session.step = "CADUCIDAD_OPCION"; // Avanza de estado
+      
       const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
-      await safeSendMessage(chatId, "Establecer caducidad:", opCad);
+      await safeSendMessage(chatId, "Por favor, selecciona una opción usando los botones en línea:", opCad);
       return;
+    }
+
+    // RED DE SEGURIDAD INTERACTIVA: Si escribe texto libre en lugar de pulsar botones de caducidad
+    if (session.step === "CADUCIDAD_OPCION") {
+      const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
+      return safeSendMessage(chatId, "⚠️ Acción requerida: Debes pulsar uno de los botones inferiores para definir la caducidad:", opCad);
     }
     
     if (session.step === "CADUCIDAD_MANUAL") {
@@ -192,6 +196,11 @@ bot.on('message', async (msg) => {
       session.step = "SEGMENTO";
       solicitarSegmento(chatId);
       return;
+    }
+
+    // RED DE SEGURIDAD INTERACTIVA: Si escribe texto libre en lugar de pulsar la zona (segmento)
+    if (session.step === "SEGMENTO") {
+      return solicitarSegmento(chatId);
     }
     
     if (session.step === "RETIRAR_CANTIDAD") {
@@ -202,6 +211,12 @@ bot.on('message', async (msg) => {
       const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciado/Merma", callback_data: "dest_Desperdiciado" }]] } };
       await safeSendMessage(chatId, `Destino para ${rNum} unidades:`, opDest);
       return;
+    }
+
+    // RED DE SEGURIDAD INTERACTIVA: Si escribe texto libre en lugar de seleccionar el destino de la baja
+    if (session.step === "RETIRAR_DESTINO") {
+      const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciado/Merma", callback_data: "dest_Desperdiciado" }]] } };
+      return safeSendMessage(chatId, "⚠️ Acción requerida: Pulsa un botón para definir el destino:", opDest);
     }
     
     if (session.step === "INPUT_SOBRAS") {
@@ -261,7 +276,7 @@ bot.on('callback_query', async (query) => {
           alimento: session.alimento,
           cantidad: session.cantidad,
           unidad: session.unidad,
-          precio: session.precio, // Envía el precio total pagado por el lote completo
+          precio: session.precio, 
           tipoCaducidad: session.tipoCaducidad,
           fechaManual: session.fechaManual || "",
           segmento: session.segmento
@@ -361,9 +376,9 @@ bot.on('callback_query', async (query) => {
 
   } catch (errCallback) {
     console.error("Error en gestor callback:", errCallback.message);
-    safeSendMessage(chatId, "⚠️ Ocurrió un interrupción en la selección.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ Ocurrió una interrupción en la selección.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
 
-console.log("🤖 Servidor de Telegram de MOAD corriendo con lógica de Precio Total (Opción A).");
+console.log("🤖 Servidor MOAD activo. Parches de interceptación de texto inyectados de forma segura.");
