@@ -145,14 +145,14 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // --- PROCESAMIENTO PASO A PASO (FLUJO SECUENCIAL REFACTORIZADO) ---
+  // --- PROCESAMIENTO PASO A PASO (FLUJO SECUENCIAL) ---
   const session = userSessions[chatId];
   if (!session) return;
 
   try {
     if (session.step === "ALIMENTO") {
       session.alimento = text; 
-      session.step = "CANTIDAD"; // Guardamos el estado ANTES de interactuar con Telegram
+      session.step = "CANTIDAD";
       await safeSendMessage(chatId, `¿Cantidad para "${text}"? (Solo número):`);
       return;
     }
@@ -161,21 +161,25 @@ bot.on('message', async (msg) => {
       const cNum = parseFloat(text.replace(',', '.'));
       if (isNaN(cNum)) return safeSendMessage(chatId, "⚠️ Número no válido. Introduce un número válido:");
       session.cantidad = cNum; 
-      session.step = "UNIDAD"; // El estado cambia inmediatamente
+      session.step = "UNIDAD";
       await safeSendMessage(chatId, "Indica unidad (ej: Kg, Litros, Uds):");
       return;
     }
     
     if (session.step === "UNIDAD") {
       session.unidad = text; 
-      session.step = "PRECIO"; // SOLUCIÓN AL CONGELAMIENTO: Avanza de estado antes de disparar el mensaje de Telegram
-      await safeSendMessage(chatId, "Introduce precio unitario (o escribe 0):");
+      session.step = "PRECIO";
+      // MODIFICACIÓN OPCIÓN A: Cambiamos el texto de solicitud para pedir el precio total del lote/pieza comprado
+      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 7 o 0 si es gratis):`);
       return;
     }
     
     if (session.step === "PRECIO") {
       const pNum = parseFloat(text.replace(',', '.'));
       if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número válido:");
+      
+      // Ahora guardamos directamente el coste que costó la pieza entera. 
+      // Si el script de Google Sheets calcula el precio unitario, lo resolverá haciendo (precio / cantidad) internamente.
       session.precio = pNum; 
       session.step = "CADUCIDAD_OPCION";
       const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
@@ -220,13 +224,11 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   const messageId = query.message.message_id;
 
-  // Confirmar recepción del click de inmediato para quitar el reloj de Telegram
   try { await bot.answerCallbackQuery(query.id); } catch(e){}
 
   const session = userSessions[chatId];
 
   try {
-    // --- Gestión de Caducidades al registrar ---
     if (data === "cad_auto") {
       if (!session) return;
       session.tipoCaducidad = "AUTOMATICO";
@@ -245,7 +247,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // --- Selección de Segmento final al registrar ---
     if (data.startsWith("seg_")) {
       if (!session) return;
       const zona = data.split("_")[1];
@@ -254,14 +255,13 @@ bot.on('callback_query', async (query) => {
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
       const msgEnviando = await safeSendMessage(chatId, "⚡ Transmitiendo datos a Google Sheets...");
 
-      // Enviar datos al webhook/Apps Script de Google
       try {
         const payload = {
           action: "escribir",
           alimento: session.alimento,
           cantidad: session.cantidad,
           unidad: session.unidad,
-          precio: session.precio,
+          precio: session.precio, // Envía el precio total pagado por el lote completo
           tipoCaducidad: session.tipoCaducidad,
           fechaManual: session.fechaManual || "",
           segmento: session.segmento
@@ -270,7 +270,7 @@ bot.on('callback_query', async (query) => {
         await api.post(process.env.URL_SHEET, payload);
         if (msgEnviando) { try { await bot.deleteMessage(chatId, msgEnviando.message_id); } catch(e){} }
         
-        safeSendMessage(chatId, `✅ *¡Registrado con éxito!*\n\n📦 *Alimento:* ${session.alimento}\n📊 *Cantidad:* ${session.cantidad} ${session.unidad}\n📍 *Ubicación:* ${session.segmento}`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `✅ *¡Registrado con éxito!*\n\n📦 *Alimento:* ${session.alimento}\n📊 *Cantidad:* ${session.cantidad} ${session.unidad}\n💰 *Coste Total:* ${session.precio} €\n📍 *Ubicación:* ${session.segmento}`, { parse_mode: "Markdown", ...mainKeyboard });
       } catch(errSheet) {
         if (msgEnviando) { try { await bot.deleteMessage(chatId, msgEnviando.message_id); } catch(e){} }
         safeSendMessage(chatId, "❌ Hubo un problema al guardar en Google Sheets, pero el flujo local ha finalizado.", mainKeyboard);
@@ -280,7 +280,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // --- Flujos para dar de BAJA un alimento (Consumo o Merma) ---
     if (data.startsWith("bajaZona_")) {
       const zonaBaja = data.split("_")[1];
       userSessions[chatId] = { step: "BAJA_ALIMENTO_SELECCION", zona: zonaBaja };
@@ -325,7 +324,7 @@ bot.on('callback_query', async (query) => {
 
     if (data.startsWith("dest_")) {
       if (!session) return;
-      const destinoBaja = data.split("_")[1]; // Consumido o Desperdiciado
+      const destinoBaja = data.split("_")[1];
       
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
       const msgProcesandoBaja = await safeSendMessage(chatId, "📉 Actualizando inventario global...");
@@ -349,7 +348,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // --- Sub-menús del Botón de Recetas y Optimización ---
     if (data.startsWith("rec_") || data.startsWith("an_")) {
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
       if (data === "rec_sobras") {
@@ -363,9 +361,9 @@ bot.on('callback_query', async (query) => {
 
   } catch (errCallback) {
     console.error("Error en gestor callback:", errCallback.message);
-    safeSendMessage(chatId, "⚠️ Ocurrió una interrupción en la selección.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ Ocurrió un interrupción en la selección.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
 
-console.log("🤖 Servidor de Telegram de MOAD corriendo sin margen de bloqueos locales.");
+console.log("🤖 Servidor de Telegram de MOAD corriendo con lógica de Precio Total (Opción A).");
