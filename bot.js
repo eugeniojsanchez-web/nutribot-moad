@@ -1,11 +1,11 @@
 const http = require('http');
 const https = require('https');
-const fetch = require('node-fetch'); // Librería estándar para comunicaciones seguras
+const fetch = require('node-fetch');
 
 // Servidor básico para mantener vivo el bot en Render
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('NutriBot MOAD Activo y Optimizado\n');
+  res.end('NutriBot MOAD Activo y Sincronizado\n');
 });
 server.listen(process.env.PORT || 3000);
 
@@ -23,18 +23,15 @@ const estadoUsuario = {};
 const datosRegistro = {};
 const loteSeleccionado = {};
 
-// Función simplificada y blindada contra bucles de redirección de Google
 async function comunicacionSheets(payload) {
   try {
     const response = await fetch(URL_SHEET, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      redirect: 'follow' // Sigue las redirecciones automáticas de Google de forma segura
+      redirect: 'follow'
     });
-    
-    const textoRespuesta = await response.text();
-    return textoRespuesta;
+    return await response.text();
   } catch (error) {
     console.error("Error crítico en comunicación con Sheets:", error);
     return JSON.stringify({ status: "error", message: error.message });
@@ -132,7 +129,7 @@ async function manejarMensaje(message) {
     }
   }
 
-  // FLUJO DE RETIRADA (CON MODO RASTREO INTEGRADO)
+  // FLUJO DE RETIRADA
   if (loteSeleccionado[chatId]) {
     const cantidadBaja = parseFloat(texto.replace(',', '.'));
     if (isNaN(cantidadBaja) || cantidadBaja <= 0) {
@@ -148,6 +145,7 @@ async function manejarMensaje(message) {
       idLote: String(infoLote.idLote).trim(),
       usuario: String(chatId), 
       nuevoEstado: infoLote.accion,
+      amountBaja: cantidadBaja, // Mantenemos compatibilidad con el script anterior si usa otra propiedad
       cantidadBaja: cantidadBaja
     });
 
@@ -156,7 +154,6 @@ async function manejarMensaje(message) {
       let icono = infoLote.accion === "Consumido" ? "😋" : (infoLote.accion === "Transformado" ? "♻️" : "🗑️");
       
       if (respuesta.status === "error") {
-        // En caso de error, el bot revelará los datos exactos que fallan en la coincidencia
         enviarTexto(chatId, `❌ *Error de Google Sheets:*\n${respuesta.message}\n\n🔍 *Rastreo del Bot:*\n• Buscando ID: \`${infoLote.idLote}\`\n• Longitud ID: ${String(infoLote.idLote).length} caracteres.`);
       } else if (respuesta.remanente === 0) {
         enviarTexto(chatId, `${icono} *Lote agotado*: Se han consumido las últimas unidades.`);
@@ -206,7 +203,7 @@ async function manejarBoton(callbackQuery) {
           enviarTexto(chatId, "❌ Error al guardar en Google Sheets.");
         }
       } catch(e) {
-        enviarTexto(chatId, "✅ Alimento incorporado correctamente a la hoja de Inventario Actual.");
+        enviarTexto(chatId, "✅ Alimento incorporado correctamente.");
       }
       delete estadoUsuario[chatId];
       delete datosRegistro[chatId];
@@ -218,7 +215,8 @@ async function manejarBoton(callbackQuery) {
   if (data.startsWith("act_")) {
     const partes = data.split("_");
     const accion = partes[1]; 
-    const idLote = partes[2]; 
+    // Reconstruimos el ID por si contenía guiones bajos adicionales
+    const idLote = partes.slice(2).join("_"); 
     
     loteSeleccionado[chatId] = { accion: accion, idLote: idLote };
     
@@ -237,21 +235,31 @@ async function mostrarNevera(chatId) {
     const resultado = JSON.parse(res);
     if (resultado.status === "success" && resultado.alimentos && resultado.alimentos.length > 0) {
       enviarTexto(chatId, "🗄️ *Artículos en tu despensa activa:*");
+      
       resultado.alimentos.forEach(item => {
+        // BLINDAJE: Si por error se cuela la cabecera, no le creamos botones en Telegram
+        var idLoteLimpio = String(item.idLote).trim();
+        if (idLoteLimpio.toLowerCase() === "id_lote" || idLoteLimpio.toLowerCase() === "lote") {
+          return; 
+        }
+
         const botones = { inline_keyboard: [
           [
-            { text: "😋 Consumir porción", callback_data: `act_Consumido_${item.idLote}` },
-            { text: "♻️ Transformar", callback_data: `act_Transformado_${item.idLote}` }
+            { text: "😋 Consumir porción", callback_data: `act_Consumido_${idLoteLimpio}` },
+            { text: "♻️ Transformar", callback_data: `act_Transformado_${idLoteLimpio}` }
           ],
-          [{ text: "🗑️ Desperdiciar / Merma", callback_data: `act_Desperdiciado_${item.idLote}` }]
+          [{ text: "🗑️ Desperdiciar / Merma", callback_data: `act_Desperdiciado_${idLoteLimpio}` }]
         ]};
+        
+        var precioU = Number(item.precioUni) || 0;
+        var precioT = Number(item.precioTotal) || 0;
         
         const resumenLote = `🥑 *${item.alimento}*\n` +
                             `• Disponible: *${item.cantRestante} ${item.unidad}* (de ${item.cantInicial})\n` +
-                            `• Precio Uni: *${item.precioUni.toFixed(2)}€*\n` +
-                            `• Valor Total: *${item.precioTotal.toFixed(2)}€*\n` +
+                            `• Precio Uni: *${precioU.toFixed(2)}€*\n` +
+                            `• Valor Total: *${precioT.toFixed(2)}€*\n` +
                             `• Zona: _${item.segmento}_\n` +
-                            `• ID Lote: \`${item.idLote}\``;
+                            `• ID Lote: \`${idLoteLimpio}\``;
                             
         enviarTextoConBotones(chatId, resumenLote, botones);
       });
