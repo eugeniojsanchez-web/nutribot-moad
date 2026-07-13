@@ -14,10 +14,12 @@ console.log("🚀 El servidor de MOAD está activo y escuchando en Telegram...")
 
 const userSessions = {};
 
+// Teclado principal con el nuevo botón de gestión directa
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
       [{ text: "📥 Registrar Compra" }, { text: "🔍 Consultar Inventario" }],
+      [{ text: "🍳 Gestionar Alimento (Consumo/Merma)" }],
       [{ text: "📊 Ver Balance Mermas" }]
     ],
     resize_keyboard: true
@@ -30,69 +32,24 @@ bot.onText(/\/start/, (msg) => {
   
   const saludo = `🤖 *Entorno MOAD: Gestión Doméstica Activa*\n\n` +
                  `Bienvenido al sistema unificado de optimización de despensa y control de residuos.\n\n` +
-                 `• Usa los botones inferiores para registrar compras o consultar el estado global.\n` +
-                 `• Usa los comandos */nevera*, */despensa* o */congelador* para gestionar el consumo o las mermas de una zona específica.`;
+                 `Utiliza los botones inferiores para interactuar con tu inventario de forma inmediata.`;
                  
   bot.sendMessage(chatId, saludo, { parse_mode: "Markdown", ...mainKeyboard });
-});
-
-// Comandos de acceso a Segmentos para consumir/mermar
-bot.onText(/\/(nevera|despensa|congelador)/i, async (msg, match) => {
-  const chatId = msg.chat.id;
-  delete userSessions[chatId];
-  
-  // Normalizar la primera letra en mayúscula para coincidir con Sheets (Nevera, Despensa, Congelador)
-  const segmentoAnclado = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
-  
-  try {
-    const mensajeEspera = await bot.sendMessage(chatId, `🔍 Buscando existencias en *${segmentoAnclado}*...`, { parse_mode: "Markdown" });
-    const res = await axios.post(process.env.URL_SHEET, { action: "leer" });
-    await bot.deleteMessage(chatId, mensajeEspera.message_id);
-
-    if (res.data.status === "success" && res.data.alimentos.length > 0) {
-      // Filtrar solo los del segmento solicitado
-      const filtrados = res.data.alimentos.filter(item => item.segmento === segmentoAnclado);
-      
-      if (filtrados.length === 0) {
-        bot.sendMessage(chatId, `✨ No hay stock registrado en *${segmentoAnclado}*.`, { parse_mode: "Markdown" });
-        return;
-      }
-
-      // Crear un botón interactivo por cada producto en stock
-      const botones = filtrados.map(item => {
-        return [{
-          text: `• ${item.alimento} (${item.cantRestante} ${item.unidad})`,
-          callback_data: `USAR_${item.idLote}`
-        }];
-      });
-
-      bot.sendMessage(chatId, `📍 *Gestión de ${segmentoAnclado}:* Selecciona el producto que vas a retirar o dar de baja:`, {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: botones }
-      });
-
-    } else {
-      bot.sendMessage(chatId, "✨ El inventario global de MOAD está vacío.");
-    }
-  } catch (err) {
-    console.error(err);
-    bot.sendMessage(chatId, "❌ Error al acceder al inventario de la zona.");
-  }
 });
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
+  const username = msg.from.username || msg.from.first_name || "Usuario_MOAD";
 
   if (!text) return;
   if (text.startsWith('/')) return;
 
-  // 1. CONSULTAR INVENTARIO GLOBAL
+  // 1. CONSULTAR INVENTARIO
   if (text === "🔍 Consultar Inventario") {
     try {
       const mensajeEspera = await bot.sendMessage(chatId, "⏳ Conectando con la base de datos de MOAD...");
       const res = await axios.post(process.env.URL_SHEET, { action: "leer" });
-      
       await bot.deleteMessage(chatId, mensajeEspera.message_id);
 
       if (res.data.status === "success" && res.data.alimentos.length > 0) {
@@ -134,11 +91,26 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // --- CONTROLADOR DE SESIONES ACTIVAS (MENSAJES DE TEXTO) ---
+  // 4. NUEVO: GESTIONAR CONSUMO/MERMA DESDE BOTÓN
+  if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
+    delete userSessions[chatId];
+    const opcionesZona = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🥦 Nevera", callback_data: "bajaZona_Nevera" }],
+          [{ text: "📦 Despensa", callback_data: "bajaZona_Despensa" }],
+          [{ text: "❄️ Congelador", callback_data: "bajaZona_Congelador" }]
+        ]
+      }
+    };
+    bot.sendMessage(chatId, "¿De qué *zona de conservación* es el producto que vas a retirar?", { parse_mode: "Markdown", ...opcionesZona });
+    return;
+  }
+
+  // --- CONTROLADOR DE SESIONES DE TEXTO ---
   const session = userSessions[chatId];
   if (!session) return;
 
-  // FLUJO COMPRA: Alimento
   if (session.step === "ALIMENTO") {
     session.alimento = text;
     session.step = "CANTIDAD";
@@ -146,7 +118,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // FLUJO COMPRA: Cantidad
   if (session.step === "CANTIDAD") {
     const cantNum = parseFloat(text.replace(',', '.'));
     if (isNaN(cantNum) || cantNum <= 0) {
@@ -159,7 +130,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // FLUJO COMPRA: Unidad
   if (session.step === "UNIDAD") {
     session.unidad = text;
     session.step = "PRECIO";
@@ -167,7 +137,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // FLUJO COMPRA: Precio
   if (session.step === "PRECIO") {
     const precioNum = parseFloat(text.replace(',', '.'));
     if (isNaN(precioNum) || precioNum < 0) {
@@ -189,7 +158,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // FLUJO COMPRA: Fecha Manual
   if (session.step === "CADUCIDAD_MANUAL") {
     const fechaRegex = /^(\d{1,2})\/(\d{1,2})(\/(\d{4}))?$/;
     if (!fechaRegex.test(text)) {
@@ -202,14 +170,12 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // FLUJO RETIRAR/BAJA: Capturar Cantidad a Usar
   if (session.step === "RETIRAR_CANTIDAD") {
     const cantidadRetirar = parseFloat(text.replace(',', '.'));
     if (isNaN(cantidadRetirar) || cantidadRetirar <= 0) {
       bot.sendMessage(chatId, "⚠️ Introduce un número válido y mayor a 0 para la cantidad a retirar:");
       return;
     }
-    
     session.cantidadRetirar = cantidadRetirar;
     session.step = "RETIRAR_DESTINO";
 
@@ -217,7 +183,7 @@ bot.on('message', async (msg) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "🍳 Consumido (Aprovechado)", callback_data: "dest_Consumido" }],
-          [{ text: "🗑️ Desperdiçado / Merma", callback_data: "dest_Desperdiciado" }]
+          [{ text: "🗑️ Desperdiciado / Merma", callback_data: "dest_Desperdiciado" }]
         ]
       }
     };
@@ -239,34 +205,59 @@ function solicitarSegmento(chatId) {
   bot.sendMessage(chatId, "Selecciona la *zona de conservación* de MOAD destino:", { parse_mode: "Markdown", ...opcionesSegmento });
 }
 
-// --- MANEJADOR DE CALLBACK QUERIES (BOTONES INTERACTIVOS) ---
+// --- INTERACTIVIDAD (CALLBACK QUERIES) ---
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const username = query.from.username || query.from.first_name || "Usuario_MOAD";
-  
-  // A) Si seleccionamos un producto para retirar (/nevera, /despensa, /congelador)
+
+  // A) Mostrar productos de la zona seleccionada
+  if (data.startsWith("bajaZona_")) {
+    bot.answerCallbackQuery(query.id);
+    const zonaElegida = data.split("_")[1];
+    
+    try {
+      bot.editMessageText(`🔍 Buscando existencias en *${zonaElegida}*...`, { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" });
+      const res = await axios.post(process.env.URL_SHEET, { action: "leer" });
+
+      if (res.data.status === "success" && res.data.alimentos.length > 0) {
+        const filtrados = res.data.alimentos.filter(item => item.segmento === zonaElegida);
+        
+        if (filtrados.length === 0) {
+          bot.sendMessage(chatId, `✨ No hay stock registrado en *${zonaElegida}*.`, mainKeyboard);
+          return;
+        }
+
+        const botones = filtrados.map(item => {
+          return [{ text: `• ${item.alimento} (${item.cantRestante} ${item.unidad})`, callback_data: `USAR_${item.idLote}` }];
+        });
+
+        bot.sendMessage(chatId, `📍 *Gestión de ${zonaElegida}:* Selecciona el producto a retirar:`, {
+          reply_markup: { inline_keyboard: botones }
+        });
+      } else {
+        bot.sendMessage(chatId, "✨ El inventario está vacío.", mainKeyboard);
+      }
+    } catch (err) {
+      bot.sendMessage(chatId, "❌ Error al conectar con el inventario.", mainKeyboard);
+    }
+    return;
+  }
+
+  // B) Al pulsar un producto concreto de la lista
   if (data.startsWith("USAR_")) {
     bot.answerCallbackQuery(query.id);
     const idLoteElegido = data.replace("USAR_", "");
+    userSessions[chatId] = { step: "RETIRAR_CANTIDAD", idLote: idLoteElegido };
     
-    userSessions[chatId] = {
-      step: "RETIRAR_CANTIDAD",
-      idLote: idLoteElegido
-    };
-    
-    bot.editMessageText("🔢 Escribe la *cantidad exacta* que vas a sacar o dar de baja (solo el número):", {
-      chat_id: chatId,
-      message_id: query.message.message_id,
-      parse_mode: "Markdown"
-    });
+    bot.sendMessage(chatId, "🔢 Escribe la *cantidad exacta* que vas a sacar o dar de baja (solo el número):", { parse_mode: "Markdown" });
     return;
   }
 
   const session = userSessions[chatId];
   if (!session) return;
 
-  // B) Flujo Compra: Manejar selección de tipo de caducidad
+  // C) Selección de caducidad
   if (data.startsWith("cad_")) {
     bot.answerCallbackQuery(query.id);
     if (data === "cad_auto") {
@@ -282,82 +273,50 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // C) Flujo Compra: Guardar producto definitivo
+  // D) Guardar producto comprado
   if (data.startsWith("seg_")) {
     const segmentoElegido = data.split("_")[1];
     bot.answerCallbackQuery(query.id);
-
     try {
-      bot.editMessageText(`⏳ Guardando datos en el segmento ${segmentoElegido}...`, { chat_id: chatId, message_id: query.message.message_id });
-
-      const payload = {
-        action: "registrar",
-        usuario: username,
-        alimento: session.alimento,
-        cantidad: session.cantidad,
-        unidad: session.unidad,
-        precio: session.precio,
-        segmento: segmentoElegido,
-        fechaCaducidad: session.fechaManual
-      };
-
+      bot.editMessageText(`⏳ Guardando en ${segmentoElegido}...`, { chat_id: chatId, message_id: query.message.message_id });
+      const payload = { action: "registrar", usuario: username, alimento: session.alimento, cantidad: session.cantidad, unidad: session.unidad, precio: session.precio, segmento: segmentoElegido, fechaCaducidad: session.fechaManual };
       const res = await axios.post(process.env.URL_SHEET, payload);
-
       if (res.data.status === "success") {
-        bot.sendMessage(chatId, `✅ *Producto Registrado en MOAD*\n\n• *Alimento*: ${session.alimento}\n• *Cantidad*: ${session.cantidad} ${session.unidad}\n• *Ubicación*: ${segmentoElegido}`, { parse_mode: "Markdown", ...mainKeyboard });
+        bot.sendMessage(chatId, `✅ *Producto Registrado*\n\n• *Alimento*: ${session.alimento}\n• *Ubicación*: ${segmentoElegido}`, { parse_mode: "Markdown", ...mainKeyboard });
       } else {
-        bot.sendMessage(chatId, "❌ Hubo un inconveniente al guardar en la hoja de cálculo.", mainKeyboard);
+        bot.sendMessage(chatId, "❌ Inconveniente con la hoja de cálculo.", mainKeyboard);
       }
     } catch (err) {
-      console.error(err);
-      bot.sendMessage(chatId, "❌ Error de conexión con el motor de Google.", mainKeyboard);
-    } finally {
-      delete userSessions[chatId];
-    }
+      bot.sendMessage(chatId, "❌ Error de conexión.", mainKeyboard);
+    } finally { delete userSessions[chatId]; }
     return;
   }
 
-  // D) Flujo Retirar: Destino Final (Consumido o Desperdiciado)
+  // E) Destino final de la baja
   if (data.startsWith("dest_")) {
     const destinoElegido = data.split("_")[1];
     bot.answerCallbackQuery(query.id);
-
     if (session.step !== "RETIRAR_DESTINO") return;
 
     try {
-      bot.editMessageText(`⏳ Procesando baja en el historial...`, { chat_id: chatId, message_id: query.message.message_id });
-
-      const payload = {
-        action: "retirar",
-        idLote: session.idLote,
-        cantidadRetirada: session.cantidadRetirar,
-        destino: destinoElegido,
-        usuario: username
-      };
-
+      bot.editMessageText(`⏳ Procesando baja...`, { chat_id: chatId, message_id: query.message.message_id });
+      const payload = { action: "retirar", idLote: session.idLote, cantidadRetirada: session.cantidadRetirar, destino: destinoElegido, usuario: username };
       const res = await axios.post(process.env.URL_SHEET, payload);
 
       if (res.data.status === "success") {
-        const msgFinal = `📉 *Inventario Actualizado*\n\n` +
-                         `Se han retirado con éxito *${session.cantidadRetirar}* unidades.\n` +
-                         `📦 Destino registrado: *${destinoElegido}*.\n\n` +
-                         `El balance financiero se ha recalculado automáticamente.`;
-        bot.sendMessage(chatId, msgFinal, { parse_mode: "Markdown", ...mainKeyboard });
+        bot.sendMessage(chatId, `📉 *Inventario Actualizado*\n\nSe retiraron *${session.cantidadRetirar}* unidades hacia *${destinoElegido}*.`, { parse_mode: "Markdown", ...mainKeyboard });
       } else {
-        bot.sendMessage(chatId, `❌ Error: ${res.data.message || "No se pudo procesar la baja."}`, mainKeyboard);
+        bot.sendMessage(chatId, `❌ Error: ${res.data.message || "No se pudo efectuar la baja."}`, mainKeyboard);
       }
     } catch (err) {
-      console.error(err);
-      bot.sendMessage(chatId, "❌ Error al conectar con Google Sheets para efectuar la baja.", mainKeyboard);
-    } finally {
-      delete userSessions[chatId];
-    }
+      bot.sendMessage(chatId, "❌ Error al conectar con Google Sheets.", mainKeyboard);
+    } finally { delete userSessions[chatId]; }
   }
 });
 
 async function ejecutarComandoBalance(chatId) {
   try {
-    const mensajeEspera = await bot.sendMessage(chatId, "📊 Calculando indicadores financieros y mermas de MOAD...");
+    const mensajeEspera = await bot.sendMessage(chatId, "📊 Calculando mermas...");
     const response = await axios.post(process.env.URL_SHEET, { action: "balance" });
     await bot.deleteMessage(chatId, mensajeEspera.message_id);
 
@@ -366,32 +325,11 @@ async function ejecutarComandoBalance(chatId) {
       const dineroSalvado = b.dineroSalvado.toFixed(2);
       const dineroPerdido = b.dineroPerdido.toFixed(2);
       const totalInvertido = (b.dineroSalvado + b.dineroPerdido).toFixed(2);
-      
-      let tasaEficiencia = 100;
-      if (b.dineroSalvado + b.dineroPerdido > 0) {
-        tasaEficiencia = ((b.dineroSalvado / (b.dineroSalvado + b.dineroPerdido)) * 100).toFixed(1);
-      }
+      let tasaEficiencia = (b.dineroSalvado + b.dineroPerdido > 0) ? ((b.dineroSalvado / (b.dineroSalvado + b.dineroPerdido)) * 100).toFixed(1) : 100;
 
-      let mensajeReporte = `📊 *MOAD: Balance de Optimización Doméstica*\n\n` +
-                           `📉 *Impacto Financiero Acumulado:*\n` +
-                           `💰 Aprovechado con éxito: *${dineroSalvado} €*\n` +
-                           `🗑️ Desperdiciado / Mermas: *${dineroPerdido} €*\n` +
-                           `🧮 Total invertido analizado: *${totalInvertido} €*\n\n` +
-                           `🎯 *Tasa de Eficiencia Doméstica: ${tasaEficiencia}%*\n`;
-
-      if (b.itemsDesperdiciados.length > 0) {
-        const listaCritica = b.itemsDesperdiciados.slice(-5).join("\n• ");
-        mensajeReporte += `🚨 *Últimas bajas por desperdicio:*\n• ${listaCritica}`;
-      } else {
-        mensajeReporte += `✨ ¡Espectacular! Cero registros de alimentos desechados en el historial.`;
-      }
-
+      let mensajeReporte = `📊 *MOAD: Balance de Optimización Doméstica*\n\n💰 Aprovechado: *${dineroSalvado} €*\n🗑️ Mermas: *${dineroPerdido} €*\n🎯 Tasa Eficiencia: *${tasaEficiencia}%*\n`;
+      if (b.itemsDesperdiciados.length > 0) mensajeReporte += `\n🚨 *Últimas mermas:*\n• ${b.itemsDesperdiciados.slice(-5).join("\n• ")}`;
       await bot.sendMessage(chatId, mensajeReporte, { parse_mode: "Markdown" });
-    } else {
-      await bot.sendMessage(chatId, "❌ No se pudo extraer la analítica.");
     }
-  } catch (error) {
-    console.error(error);
-    bot.sendMessage(chatId, "❌ Error crítico al compilar el balance.");
-  }
+  } catch (error) { bot.sendMessage(chatId, "❌ Error al compilar balance."); }
 }
