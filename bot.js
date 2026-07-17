@@ -1,17 +1,26 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
-const http = require('http'); // Servidor nativo de Node.js para el puerto fantasma
+const http = require('http');
 
+// Configuración de variables de entorno
 const token = process.env.TELEGRAM_TOKEN;
-const bot = new TelegramBot(token, { polling: true });
+const PORT = process.env.PORT || 10000;
+const url = 'https://nutribot-moad.onrender.com'; // URL de tu servicio en Render
 
+// Inicialización del bot en modo Webhook para Render
+const bot = new TelegramBot(token, { webHook: { port: PORT } });
+bot.setWebHook(`${url}/bot${token}`);
+
+// Configuración de la API para conectar con Google Sheets
 const api = axios.create({
-  timeout: 10000, 
+  timeout: 15000, 
   headers: { 'Content-Type': 'application/json' }
 });
 
+// Almacenamiento temporal de estados de usuario
 const userSessions = {};
 
+// Teclado principal de la aplicación
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
@@ -24,6 +33,7 @@ const mainKeyboard = {
   }
 };
 
+// Función auxiliar segura para el envío de mensajes
 async function safeSendMessage(chatId, text, options = {}) {
   try {
     return await bot.sendMessage(chatId, text, options);
@@ -33,6 +43,7 @@ async function safeSendMessage(chatId, text, options = {}) {
   }
 }
 
+// Función auxiliar para solicitar la zona de almacenamiento
 function solicitarSegmento(chatId) {
   const mSeg = {
     reply_markup: {
@@ -46,6 +57,9 @@ function solicitarSegmento(chatId) {
   safeSendMessage(chatId, "Selecciona la zona de conservación:", mSeg);
 }
 
+// ====================================================================
+// 📥 GESTOR DE MENSAJES ENTRANTE (TEXTO)
+// ====================================================================
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -53,9 +67,10 @@ bot.on('message', async (msg) => {
 
   if (text === '/start') {
     delete userSessions[chatId];
-    return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar sin bloqueos.", { parse_mode: "Markdown", ...mainKeyboard });
+    return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario sin bloqueos.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
+  // 🔍 MENU: Consultar Inventario
   if (text === "🔍 Consultar Inventario") {
     try {
       const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos de MOAD...");
@@ -89,6 +104,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // 📈 MENU: Ver Balance de Mermas
   if (text === "📈 Ver Balance Mermas") {
     try {
       const res = await api.post(process.env.URL_SHEET, { action: "balance" });
@@ -103,24 +119,28 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // 📥 MENU: Registrar Compra
   if (text === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
     safeSendMessage(chatId, "✍️ Escribe el nombre del alimento:");
     return;
   }
 
+  // 🍳 MENU: Gestionar Alimento (Consumo/Baja)
   if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
     const mBaja = { reply_markup: { inline_keyboard: [[{ text: "🥦 Nevera", callback_data: "bajaZona_Nevera" }], [{ text: "📦 Despensa", callback_data: "bajaZona_Despensa" }], [{ text: "❄️ Congelador", callback_data: "bajaZona_Congelador" }]] } };
     safeSendMessage(chatId, "¿De qué zona de conservación vas a retirar el alimento?", mBaja);
     return;
   }
 
+  // 🥗 MENU: Recetas (Informativo de flujo)
   if (text === "🥗 Menú Recetas") {
     const tRec = { reply_markup: { inline_keyboard: [[{ text: "🚨 Uso Inmediato", callback_data: "rec_urgente" }], [{ text: "🍲 Ideas por Zona", callback_data: "rec_zona" }], [{ text: "✨ Receta con Sobras", callback_data: "rec_sobras" }]] } };
     safeSendMessage(chatId, "🥗 *Planificación y Aprovechamiento:*", tRec);
     return;
   }
 
+  // 📊 MENU: Optimizar Cesta por IA (Informativo de flujo)
   if (text === "📊 Optimizar Cesta (IA)") {
     const tAnalisis = {
       reply_markup: {
@@ -134,6 +154,7 @@ bot.on('message', async (msg) => {
     return;
   }
 
+  // Máquina de estados conversacionales (Flujos guiados)
   const session = userSessions[chatId];
   if (!session) return;
 
@@ -141,35 +162,34 @@ bot.on('message', async (msg) => {
     if (session.step === "ALIMENTO") {
       session.alimento = text; 
       session.step = "CANTIDAD";
-      await safeSendMessage(chatId, `¿Cantidad para "${text}"? (Solo número):`);
+      await safeSendMessage(chatId, `¿Cantidad para "${text}"? (Introduce solo el número):`);
       return;
     }
     
     if (session.step === "CANTIDAD") {
       const cNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(cNum)) return safeSendMessage(chatId, "⚠️ Número no válido. Introduce un número válido:");
+      if (isNaN(cNum)) return safeSendMessage(chatId, "⚠️ Número no válido. Introduce una cantidad numérica:");
       session.cantidad = cNum; 
       session.step = "UNIDAD";
-      await safeSendMessage(chatId, "Indica unidad (ej: Kg, Litros, Uds):");
+      await safeSendMessage(chatId, "Indica la unidad de medida (ej: Kg, Litros, Uds):");
       return;
     }
     
     if (session.step === "UNIDAD") {
       session.unidad = text; 
       session.step = "PRECIO";
-      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 7 o 0 si es gratis):`);
+      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 4.50 o 0 si es un regalo):`);
       return;
     }
     
     if (session.step === "PRECIO") {
       const pNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número válido:");
-      
+      if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Por favor introduce un número válido:");
       session.precio = pNum; 
       session.step = "CADUCIDAD_OPCION"; 
       
-      const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
-      await safeSendMessage(chatId, "Por favor, selecciona una opción usando los botones en línea:", opCad);
+      const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático (7 días)", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
+      await safeSendMessage(chatId, "Selecciona el método para establecer la fecha de caducidad:", opCad);
       return;
     }
 
@@ -182,26 +202,23 @@ bot.on('message', async (msg) => {
     
     if (session.step === "RETIRAR_CANTIDAD") {
       const rNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(rNum)) return safeSendMessage(chatId, "⚠️ Cantidad incorrecta. Introduce un número:");
+      if (isNaN(rNum)) return safeSendMessage(chatId, "⚠️ Cantidad incorrecta. Escribe el número exacto a retirar:");
       session.cantidadRetirar = rNum; 
       session.step = "RETIRAR_DESTINO";
-      const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciado/Merma", callback_data: "dest_Desperdiciado" }]] } };
-      await safeSendMessage(chatId, `Destino para ${rNum} unidades:`, opDest);
-      return;
-    }
-    
-    if (session.step === "INPUT_SOBRAS") {
-      await safeSendMessage(chatId, "🍳 *Respuesta del Chef MOAD:* Con los ingredientes indicados, te sugiero realizar un salteado rápido en sartén bien caliente con ajo y un huevo batido por encima.", mainKeyboard);
-      delete userSessions[chatId];
+      const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Despericiado/Merma", callback_data: "dest_Desperdiciado" }]] } };
+      await safeSendMessage(chatId, `Destino asignado para las ${rNum} unidades extraídas:`, opDest);
       return;
     }
   } catch(err) {
-    console.error("Error crítico en la máquina de estados:", err.message);
-    safeSendMessage(chatId, "⚠️ Ocurrió un error procesando los datos. Cancelando operación.", mainKeyboard);
+    console.error("Error en la máquina de estados:", err.message);
+    safeSendMessage(chatId, "⚠️ Ocurrió un error al procesar el flujo. Operación cancelada.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
 
+// ====================================================================
+// 🎛️ GESTOR DE LLAMADAS CALLBACK (BOTONES EN LÍNEA)
+// ====================================================================
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
@@ -223,7 +240,7 @@ bot.on('callback_query', async (query) => {
       session.tipoCaducidad = "MANUAL";
       session.step = "CADUCIDAD_MANUAL";
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-      safeSendMessage(chatId, "✍️ Introduce la fecha de caducidad (ej: 2026-07-20 o DD/MM/AAAA):");
+      safeSendMessage(chatId, "✍️ Escribe la fecha de caducidad en formato (AAAA-MM-DD):");
       return;
     }
     if (data.startsWith("seg_")) {
@@ -231,7 +248,7 @@ bot.on('callback_query', async (query) => {
       const zona = data.split("_")[1];
       session.segmento = zona;
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-      const msgEnviando = await safeSendMessage(chatId, "⚡ Transmitiendo datos a Google Sheets...");
+      const msgEnviando = await safeSendMessage(chatId, "⚡ Registrando datos en el ecosistema MOAD...");
       try {
         const payload = {
           action: "escribir",
@@ -250,11 +267,11 @@ bot.on('callback_query', async (query) => {
         if (res.data && res.data.status === "success") {
           safeSendMessage(chatId, `✅ *¡Registrado con éxito!*\n\n📦 *Alimento:* ${session.alimento}\n📊 *Cantidad:* ${session.cantidad} ${session.unidad}\n💰 *Coste Total:* ${session.precio} €\n📍 *Ubicación:* ${session.segmento}`, { parse_mode: "Markdown", ...mainKeyboard });
         } else {
-          safeSendMessage(chatId, "⚠️ Error de comunicación: Google Sheets no guardó los datos.", mainKeyboard);
+          safeSendMessage(chatId, "⚠️ Google Sheets no pudo procesar la inserción.", mainKeyboard);
         }
       } catch(errSheet) {
         if (msgEnviando) { try { await bot.deleteMessage(chatId, msgEnviando.message_id); } catch(e){} }
-        safeSendMessage(chatId, "❌ Hubo un problema de red al guardar en Google Sheets.", mainKeyboard);
+        safeSendMessage(chatId, "❌ Falla de red severa al intentar persistir los datos en Google Sheets.", mainKeyboard);
       }
       delete userSessions[chatId];
       return;
@@ -264,7 +281,7 @@ bot.on('callback_query', async (query) => {
       userSessions[chatId] = { step: "BAJA_ALIMENTO_SELECCION", zona: zonaBaja };
       
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-      const msgCarga = await safeSendMessage(chatId, `⏳ Cargando existencias de: *${zonaBaja}*...`, { parse_mode: "Markdown" });
+      const msgCarga = await safeSendMessage(chatId, `⏳ Extrayendo existencias activas en: *${zonaBaja}*...`, { parse_mode: "Markdown" });
       
       try {
         const res = await api.post(process.env.URL_SHEET, { action: "leer" });
@@ -273,18 +290,18 @@ bot.on('callback_query', async (query) => {
           const filtrados = res.data.alimentos.filter(a => a.segmento === zonaBaja && parseFloat(a.cantRestante) > 0);
           
           if (filtrados.length === 0) {
-            safeSendMessage(chatId, `✨ No hay alimentos disponibles en la ${zonaBaja}.`, mainKeyboard);
+            safeSendMessage(chatId, `✨ No se detectan existencias remanentes en la zona: ${zonaBaja}.`, mainKeyboard);
             delete userSessions[chatId];
             return;
           }
           const filasBotones = filtrados.map(a => [{ text: `• ${a.alimento} (${a.cantRestante} ${a.unidad})`, callback_data: `bajaId_${a.id}` }]);
-          safeSendMessage(chatId, "Selecciona el artículo que deseas gestionar:", { reply_markup: { inline_keyboard: filasBotones } });
+          safeSendMessage(chatId, "Selecciona el lote específico que deseas gestionar:", { reply_markup: { inline_keyboard: filasBotones } });
         } else {
-          safeSendMessage(chatId, "⚠️ Error al leer el inventario para procesar la baja.", mainKeyboard);
+          safeSendMessage(chatId, "⚠️ Error estructural al interrogar el inventario activo.", mainKeyboard);
         }
       } catch (errList) {
         if (msgCarga) { try { await bot.deleteMessage(chatId, msgCarga.message_id); } catch(e){} }
-        safeSendMessage(chatId, "❌ Error de red al conectar con el inventario.", mainKeyboard);
+        safeSendMessage(chatId, "❌ Error crítico de comunicación al recuperar listados.", mainKeyboard);
         delete userSessions[chatId];
       }
       return;
@@ -295,7 +312,7 @@ bot.on('callback_query', async (query) => {
       session.step = "RETIRAR_CANTIDAD";
       
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-      safeSendMessage(chatId, "✍ ¿Qué cantidad vas a retirar? (Escribe el número):");
+      safeSendMessage(chatId, "✍️ ¿Qué cantidad exacta deseas extraer del lote? (Escribe el número):");
       return;
     }
     if (data.startsWith("dest_")) {
@@ -303,7 +320,7 @@ bot.on('callback_query', async (query) => {
       const destinoBaja = data.split("_")[1];
       
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-      const msgProcesandoBaja = await safeSendMessage(chatId, "📉 Actualizando inventario...");
+      const msgProcesandoBaja = await safeSendMessage(chatId, "📉 Sincronizando modificaciones de stock...");
       try {
         const res = await api.post(process.env.URL_SHEET, {
           action: "baja",
@@ -315,35 +332,47 @@ bot.on('callback_query', async (query) => {
         if (msgProcesandoBaja) { try { await bot.deleteMessage(chatId, msgProcesandoBaja.message_id); } catch(e){} }
         
         if (res.data && res.data.status === "success") {
-          safeSendMessage(chatId, `📉 ¡Retirada procesada con éxito!\n\nSe han retirado ${session.cantidadRetirar} unidades con destino: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+          safeSendMessage(chatId, `📉 *¡Baja asentada correctamente!*\n\nSe extrajeron *${session.cantidadRetirar}* unidades. Destino contable: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
         } else {
-          safeSendMessage(chatId, `⚠️ No se pudo procesar la baja: ${res.data.message || 'Error desconocido'}.`, mainKeyboard);
+          safeSendMessage(chatId, `⚠️ Denegado por la base de datos: ${res.data.message || 'Error desconocido'}.`, mainKeyboard);
         }
       } catch(errBajaEj) {
         if (msgProcesandoBaja) { try { await bot.deleteMessage(chatId, msgProcesandoBaja.message_id); } catch(e){} }
-        safeSendMessage(chatId, "❌ No se pudo conectar con Google Sheets para registrar la baja.", mainKeyboard);
+        safeSendMessage(chatId, "❌ Error de sincronización extrema: El servidor Sheets no responde.", mainKeyboard);
       }
       delete userSessions[chatId];
       return;
     }
   } catch (errCallback) {
     console.error("Error en gestor callback:", errCallback.message);
-    safeSendMessage(chatId, "⚠️ Ocurrió una interrupción en la selección.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ Operación interrumpida prematuramente.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
 
 // ====================================================================
-// 🌐 SERVIDOR WEB FANTASMA (Para que Render no cancele la ejecución)
+// 🌐 SERVIDOR DE WEBHOOKS INTEGRADO (Para Render Web Service)
 // ====================================================================
-const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('MOAD Engine Activo\n');
+  if (req.method === 'POST' && req.url === `/bot${token}`) {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const obj = JSON.parse(body);
+        bot.processUpdate(obj);
+      } catch (e) {
+        console.error("Fallo crítico parseando Update de Telegram:", e.message);
+      }
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('OK');
+    });
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('MOAD Engine Activo y Operando en Modo Webhook Nivel Emisario\n');
+  }
 });
 
 server.listen(PORT, () => {
-  console.log(`📡 Puerto fantasma escuchando correctamente en el puerto ${PORT}`);
+  console.log(`📡 Servidor de Webhooks MOAD escuchando en el puerto ${PORT}`);
 });
-
-console.log("🤖 Servidor MOAD activo. Parches de interceptación inyectados con éxito.");
