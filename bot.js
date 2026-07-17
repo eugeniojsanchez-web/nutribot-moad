@@ -1,13 +1,12 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const http = require('http'); // Servidor nativo de Node.js para el puerto fantasma
 
-// Inicialización del Bot
 const token = process.env.TELEGRAM_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
-// Instancia optimizada de Axios
 const api = axios.create({
-  timeout: 10000,
+  timeout: 10000, 
   headers: { 'Content-Type': 'application/json' }
 });
 
@@ -26,8 +25,12 @@ const mainKeyboard = {
 };
 
 async function safeSendMessage(chatId, text, options = {}) {
-  try { return await bot.sendMessage(chatId, text, options); }
-  catch (err) { console.error(`Error enviando mensaje a ${chatId}:`, err.message); return null; }
+  try {
+    return await bot.sendMessage(chatId, text, options);
+  } catch (err) {
+    console.error(`Error enviando mensaje a ${chatId}:`, err.message);
+    return null;
+  }
 }
 
 function solicitarSegmento(chatId) {
@@ -58,7 +61,7 @@ bot.on('message', async (msg) => {
       const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos de MOAD...");
       const res = await api.post(process.env.URL_SHEET, { action: "leer" });
       if (msgWait) { try { await bot.deleteMessage(chatId, msgWait.message_id); } catch(dErr){} }
-
+      
       if (res.data && res.data.status === "success") {
         if (Array.isArray(res.data.alimentos) && res.data.alimentos.length > 0) {
           let listado = `📋 *Inventario Actual MOAD*\n\n`;
@@ -80,8 +83,8 @@ bot.on('message', async (msg) => {
       } else {
         safeSendMessage(chatId, "⚠️ Error de comunicación: Google Sheets no devolvió los datos correctamente.");
       }
-    } catch (e) {
-      safeSendMessage(chatId, "❌ La consulta tardó demasiado o la base de datos no responde.");
+    } catch (e) { 
+      safeSendMessage(chatId, "❌ La consulta tardó demasiado o la base de datos no responde."); 
     }
     return;
   }
@@ -90,7 +93,7 @@ bot.on('message', async (msg) => {
     try {
       const res = await api.post(process.env.URL_SHEET, { action: "balance" });
       if (res.data && res.data.balance) {
-        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown" });
+        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas (Desperdiciado): *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown" });
       } else {
         safeSendMessage(chatId, "⚠️ No se han podido calcular los balances actuales.");
       }
@@ -119,7 +122,14 @@ bot.on('message', async (msg) => {
   }
 
   if (text === "📊 Optimizar Cesta (IA)") {
-    const tAnalisis = { reply_markup: { inline_keyboard: [[{ text: "🗓️ Última Semana (7 días)", callback_data: "an_7" }, { text: "📅 Último Mes (30 días)", callback_data: "an_30" }], [{ text: "📊 Trimestre (90 días)", callback_data: "an_90" }, { text: "📈 Año Completo (365 días)", callback_data: "an_365" }]] } };
+    const tAnalisis = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🗓️ Última Semana (7 días)", callback_data: "an_7" }, { text: "📅 Último Mes (30 días)", callback_data: "an_30" }],
+          [{ text: "📊 Trimestre (90 días)", callback_data: "an_90" }, { text: "📈 Año Completo (365 días)", callback_data: "an_365" }]
+        ]
+      }
+    };
     safeSendMessage(chatId, "📊 *Inteligencia de Consumo*\n\nSelecciona la ventana temporal para evaluar existencias:", { parse_mode: "Markdown", ...tAnalisis });
     return;
   }
@@ -129,43 +139,65 @@ bot.on('message', async (msg) => {
 
   try {
     if (session.step === "ALIMENTO") {
-      session.alimento = text;
+      session.alimento = text; 
       session.step = "CANTIDAD";
       await safeSendMessage(chatId, `¿Cantidad para "${text}"? (Solo número):`);
-    } else if (session.step === "CANTIDAD") {
+      return;
+    }
+    
+    if (session.step === "CANTIDAD") {
       const cNum = parseFloat(text.replace(',', '.'));
       if (isNaN(cNum)) return safeSendMessage(chatId, "⚠️ Número no válido. Introduce un número válido:");
-      session.cantidad = cNum;
+      session.cantidad = cNum; 
       session.step = "UNIDAD";
       await safeSendMessage(chatId, "Indica unidad (ej: Kg, Litros, Uds):");
-    } else if (session.step === "UNIDAD") {
-      session.unidad = text;
+      return;
+    }
+    
+    if (session.step === "UNIDAD") {
+      session.unidad = text; 
       session.step = "PRECIO";
-      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL para ${session.cantidad} ${session.unidad} (ej: 7 o 0 si es gratis):`);
-    } else if (session.step === "PRECIO") {
+      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 7 o 0 si es gratis):`);
+      return;
+    }
+    
+    if (session.step === "PRECIO") {
       const pNum = parseFloat(text.replace(',', '.'));
       if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número válido:");
-      session.precio = pNum;
-      session.step = "CADUCIDAD_OPCION";
+      
+      session.precio = pNum; 
+      session.step = "CADUCIDAD_OPCION"; 
+      
       const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
-      await safeSendMessage(chatId, "Selecciona el método de caducidad:", opCad);
-    } else if (session.step === "CADUCIDAD_MANUAL") {
-      session.fechaManual = text;
+      await safeSendMessage(chatId, "Por favor, selecciona una opción usando los botones en línea:", opCad);
+      return;
+    }
+
+    if (session.step === "CADUCIDAD_MANUAL") {
+      session.fechaManual = text; 
       session.step = "SEGMENTO";
       solicitarSegmento(chatId);
-    } else if (session.step === "RETIRAR_CANTIDAD") {
+      return;
+    }
+    
+    if (session.step === "RETIRAR_CANTIDAD") {
       const rNum = parseFloat(text.replace(',', '.'));
       if (isNaN(rNum)) return safeSendMessage(chatId, "⚠️ Cantidad incorrecta. Introduce un número:");
-      session.cantidadRetirar = rNum;
+      session.cantidadRetirar = rNum; 
       session.step = "RETIRAR_DESTINO";
       const opDest = { reply_markup: { inline_keyboard: [[{ text: "🍳 Consumido", callback_data: "dest_Consumido" }], [{ text: "🗑️ Desperdiciado/Merma", callback_data: "dest_Desperdiciado" }]] } };
       await safeSendMessage(chatId, `Destino para ${rNum} unidades:`, opDest);
-    } else if (session.step === "INPUT_SOBRAS") {
-      await safeSendMessage(chatId, "🍳 *Respuesta del Chef MOAD:* Con los ingredientes indicados, te sugiero realizar un salteado rápido en sartén con ajo y un huevo batido.", mainKeyboard);
+      return;
+    }
+    
+    if (session.step === "INPUT_SOBRAS") {
+      await safeSendMessage(chatId, "🍳 *Respuesta del Chef MOAD:* Con los ingredientes indicados, te sugiero realizar un salteado rápido en sartén bien caliente con ajo y un huevo batido por encima.", mainKeyboard);
       delete userSessions[chatId];
+      return;
     }
   } catch(err) {
-    safeSendMessage(chatId, "⚠️ Error procesando los datos. Cancelando.", mainKeyboard);
+    console.error("Error crítico en la máquina de estados:", err.message);
+    safeSendMessage(chatId, "⚠️ Ocurrió un error procesando los datos. Cancelando operación.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
@@ -176,40 +208,142 @@ bot.on('callback_query', async (query) => {
   const messageId = query.message.message_id;
   try { await bot.answerCallbackQuery(query.id); } catch(e){}
   const session = userSessions[chatId];
-  
-  if (data === "cad_auto" && session) {
-    session.tipoCaducidad = "AUTOMATICO";
-    session.step = "SEGMENTO";
-    try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-    solicitarSegmento(chatId);
-  } else if (data === "cad_manual" && session) {
-    session.tipoCaducidad = "MANUAL";
-    session.step = "CADUCIDAD_MANUAL";
-    try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-    safeSendMessage(chatId, "✍️ Introduce la fecha de caducidad (ej: 2026-07-20):");
-  } else if (data.startsWith("seg_") && session) {
-    session.segmento = data.split("_")[1];
-    try { await bot.deleteMessage(chatId, messageId); } catch(e){}
-    const res = await api.post(process.env.URL_SHEET, { action: "escribir", ...session });
-    if (res.data?.status === "success") {
-      safeSendMessage(chatId, "✅ ¡Registrado con éxito!", { ...mainKeyboard });
-    } else {
-      safeSendMessage(chatId, "⚠️ Error al guardar en Sheets.", mainKeyboard);
+
+  try {
+    if (data === "cad_auto") {
+      if (!session) return;
+      session.tipoCaducidad = "AUTOMATICO";
+      session.step = "SEGMENTO";
+      try { await bot.deleteMessage(chatId, messageId); } catch(e){}
+      solicitarSegmento(chatId);
+      return;
     }
-    delete userSessions[chatId];
-  } else if (data.startsWith("bajaZona_")) {
-    const zona = data.split("_")[1];
-    const res = await api.post(process.env.URL_SHEET, { action: "leer" });
-    const filtrados = res.data?.alimentos?.filter(a => a.segmento === zona && a.cantRestante > 0) || [];
-    if (filtrados.length === 0) return safeSendMessage(chatId, "✨ Sin existencias en esta zona.");
-    const kb = filtrados.map(a => [{ text: `• ${a.alimento} (${a.cantRestante})`, callback_data: `bajaId_${a.id}` }]);
-    safeSendMessage(chatId, "Selecciona el artículo:", { reply_markup: { inline_keyboard: kb } });
-  } else if (data.startsWith("bajaId_")) {
-    userSessions[chatId] = { step: "RETIRAR_CANTIDAD", alimentoId: data.split("_")[1] };
-    safeSendMessage(chatId, "✍️ ¿Qué cantidad vas a retirar?");
-  } else if (data.startsWith("dest_") && session) {
-    const res = await api.post(process.env.URL_SHEET, { action: "baja", id: session.alimentoId, cantidadRetirar: session.cantidadRetirar, destino: data.split("_")[1] });
-    if (res.data?.status === "success") safeSendMessage(chatId, "📉 ¡Retirada procesada!", mainKeyboard);
+    if (data === "cad_manual") {
+      if (!session) return;
+      session.tipoCaducidad = "MANUAL";
+      session.step = "CADUCIDAD_MANUAL";
+      try { await bot.deleteMessage(chatId, messageId); } catch(e){}
+      safeSendMessage(chatId, "✍️ Introduce la fecha de caducidad (ej: 2026-07-20 o DD/MM/AAAA):");
+      return;
+    }
+    if (data.startsWith("seg_")) {
+      if (!session) return;
+      const zona = data.split("_")[1];
+      session.segmento = zona;
+      try { await bot.deleteMessage(chatId, messageId); } catch(e){}
+      const msgEnviando = await safeSendMessage(chatId, "⚡ Transmitiendo datos a Google Sheets...");
+      try {
+        const payload = {
+          action: "escribir",
+          alimento: session.alimento,
+          cantidad: session.cantidad,
+          unidad: session.unidad,
+          precio: session.precio, 
+          tipoCaducidad: session.tipoCaducidad,
+          fechaManual: session.fechaManual || "",
+          segmento: session.segmento
+        };
+        
+        const res = await api.post(process.env.URL_SHEET, payload);
+        if (msgEnviando) { try { await bot.deleteMessage(chatId, msgEnviando.message_id); } catch(e){} }
+        
+        if (res.data && res.data.status === "success") {
+          safeSendMessage(chatId, `✅ *¡Registrado con éxito!*\n\n📦 *Alimento:* ${session.alimento}\n📊 *Cantidad:* ${session.cantidad} ${session.unidad}\n💰 *Coste Total:* ${session.precio} €\n📍 *Ubicación:* ${session.segmento}`, { parse_mode: "Markdown", ...mainKeyboard });
+        } else {
+          safeSendMessage(chatId, "⚠️ Error de comunicación: Google Sheets no guardó los datos.", mainKeyboard);
+        }
+      } catch(errSheet) {
+        if (msgEnviando) { try { await bot.deleteMessage(chatId, msgEnviando.message_id); } catch(e){} }
+        safeSendMessage(chatId, "❌ Hubo un problema de red al guardar en Google Sheets.", mainKeyboard);
+      }
+      delete userSessions[chatId];
+      return;
+    }
+    if (data.startsWith("bajaZona_")) {
+      const zonaBaja = data.split("_")[1];
+      userSessions[chatId] = { step: "BAJA_ALIMENTO_SELECCION", zona: zonaBaja };
+      
+      try { await bot.deleteMessage(chatId, messageId); } catch(e){}
+      const msgCarga = await safeSendMessage(chatId, `⏳ Cargando existencias de: *${zonaBaja}*...`, { parse_mode: "Markdown" });
+      
+      try {
+        const res = await api.post(process.env.URL_SHEET, { action: "leer" });
+        if (msgCarga) { try { await bot.deleteMessage(chatId, msgCarga.message_id); } catch(e){} }
+        if (res.data && res.data.status === "success" && Array.isArray(res.data.alimentos)) {
+          const filtrados = res.data.alimentos.filter(a => a.segmento === zonaBaja && parseFloat(a.cantRestante) > 0);
+          
+          if (filtrados.length === 0) {
+            safeSendMessage(chatId, `✨ No hay alimentos disponibles en la ${zonaBaja}.`, mainKeyboard);
+            delete userSessions[chatId];
+            return;
+          }
+          const filasBotones = filtrados.map(a => [{ text: `• ${a.alimento} (${a.cantRestante} ${a.unidad})`, callback_data: `bajaId_${a.id}` }]);
+          safeSendMessage(chatId, "Selecciona el artículo que deseas gestionar:", { reply_markup: { inline_keyboard: filasBotones } });
+        } else {
+          safeSendMessage(chatId, "⚠️ Error al leer el inventario para procesar la baja.", mainKeyboard);
+        }
+      } catch (errList) {
+        if (msgCarga) { try { await bot.deleteMessage(chatId, msgCarga.message_id); } catch(e){} }
+        safeSendMessage(chatId, "❌ Error de red al conectar con el inventario.", mainKeyboard);
+        delete userSessions[chatId];
+      }
+      return;
+    }
+    if (data.startsWith("bajaId_")) {
+      if (!session) return;
+      session.alimentoId = data.split("_")[1];
+      session.step = "RETIRAR_CANTIDAD";
+      
+      try { await bot.deleteMessage(chatId, messageId); } catch(e){}
+      safeSendMessage(chatId, "✍ ¿Qué cantidad vas a retirar? (Escribe el número):");
+      return;
+    }
+    if (data.startsWith("dest_")) {
+      if (!session) return;
+      const destinoBaja = data.split("_")[1];
+      
+      try { await bot.deleteMessage(chatId, messageId); } catch(e){}
+      const msgProcesandoBaja = await safeSendMessage(chatId, "📉 Actualizando inventario...");
+      try {
+        const res = await api.post(process.env.URL_SHEET, {
+          action: "baja",
+          id: session.alimentoId,
+          cantidadRetirar: session.cantidadRetirar,
+          destino: destinoBaja
+        });
+        
+        if (msgProcesandoBaja) { try { await bot.deleteMessage(chatId, msgProcesandoBaja.message_id); } catch(e){} }
+        
+        if (res.data && res.data.status === "success") {
+          safeSendMessage(chatId, `📉 ¡Retirada procesada con éxito!\n\nSe han retirado ${session.cantidadRetirar} unidades con destino: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+        } else {
+          safeSendMessage(chatId, `⚠️ No se pudo procesar la baja: ${res.data.message || 'Error desconocido'}.`, mainKeyboard);
+        }
+      } catch(errBajaEj) {
+        if (msgProcesandoBaja) { try { await bot.deleteMessage(chatId, msgProcesandoBaja.message_id); } catch(e){} }
+        safeSendMessage(chatId, "❌ No se pudo conectar con Google Sheets para registrar la baja.", mainKeyboard);
+      }
+      delete userSessions[chatId];
+      return;
+    }
+  } catch (errCallback) {
+    console.error("Error en gestor callback:", errCallback.message);
+    safeSendMessage(chatId, "⚠️ Ocurrió una interrupción en la selección.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
+
+// ====================================================================
+// 🌐 SERVIDOR WEB FANTASMA (Para que Render no cancele la ejecución)
+// ====================================================================
+const PORT = process.env.PORT || 10000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('MOAD Engine Activo\n');
+});
+
+server.listen(PORT, () => {
+  console.log(`📡 Puerto fantasma escuchando correctamente en el puerto ${PORT}`);
+});
+
+console.log("🤖 Servidor MOAD activo. Parches de interceptación inyectados con éxito.");
