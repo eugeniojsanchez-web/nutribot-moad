@@ -33,9 +33,13 @@ const mainKeyboard = {
   }
 };
 
-// Función auxiliar segura para el envío de mensajes
+// Función auxiliar segura para el envío de mensajes (con control anti-desborde)
 async function safeSendMessage(chatId, text, options = {}) {
   try {
+    // Protección estricta contra el límite de 4096 caracteres de Telegram
+    if (text && text.length > 3800) {
+      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente por exceder el límite de longitud permitida]*";
+    }
     return await bot.sendMessage(chatId, text, options);
   } catch (err) {
     console.error(`Error enviando mensaje a ${chatId}:`, err.message);
@@ -78,17 +82,25 @@ bot.on('message', async (msg) => {
       if (msgWait) { try { await bot.deleteMessage(chatId, msgWait.message_id); } catch(dErr){} }
       
       if (res.data && res.data.status === "success") {
-        if (Array.isArray(res.data.alimentos) && res.data.alimentos.length > 0) {
+        const listaAlimentos = res.data.alimentos || res.data.datos || res.data.items || [];
+        if (Array.isArray(listaAlimentos) && listaAlimentos.length > 0) {
           let listado = `📋 *Inventario Actual MOAD*\n\n`;
           const grupos = {};
-          res.data.alimentos.forEach(item => {
-            if (!item.segmento) return;
-            if (!grupos[item.segmento]) grupos[item.segmento] = [];
-            grupos[item.segmento].push(item);
+          
+          listaAlimentos.forEach(item => {
+            const seg = item.segmento || item.Segmento_Inicial || "Despensa";
+            if (!grupos[seg]) grupos[seg] = [];
+            grupos[seg].push(item);
           });
+
           for (const seg in grupos) {
             listado += `📍 *${seg.toUpperCase()}:*\n`;
-            grupos[seg].forEach(item => { listado += `• *${item.alimento}*: ${item.cantRestante} ${item.unidad}\n`; });
+            grupos[seg].forEach(item => { 
+              const nombre = item.alimento || item.Alimento || "Producto";
+              const cant = item.cantRestante !== undefined ? item.cantRestante : (item.Cantidad_Restante || 0);
+              const unidad = item.unidad || item.Unidad || "Unid.";
+              listado += `• *${nombre}*: ${cant} ${unidad}\n`; 
+            });
             listado += `\n`;
           }
           safeSendMessage(chatId, listado, { parse_mode: "Markdown" });
@@ -146,7 +158,7 @@ bot.on('message', async (msg) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "🗓️ Última Semana (7 días)", callback_data: "an_7" }, { text: "📅 Último Mes (30 días)", callback_data: "an_30" }],
-          [{ text: "📊 Trimestre (90 días)", callback_data: "an_90" }, { text: "📈 Año Completo (365 días)", callback_data: "an_365" }]
+          [{ text: "📊 Trimestre (90 days)", callback_data: "an_90" }, { text: "📈 Año Completo (365 días)", callback_data: "an_365" }]
         ]
       }
     };
@@ -286,15 +298,28 @@ bot.on('callback_query', async (query) => {
       try {
         const res = await api.post(process.env.URL_SHEET, { action: "leer" });
         if (msgCarga) { try { await bot.deleteMessage(chatId, msgCarga.message_id); } catch(e){} }
-        if (res.data && res.data.status === "success" && Array.isArray(res.data.alimentos)) {
-          const filtrados = res.data.alimentos.filter(a => a.segmento === zonaBaja && parseFloat(a.cantRestante) > 0);
+        
+        if (res.data && res.data.status === "success") {
+          const listaAlimentos = res.data.alimentos || res.data.datos || res.data.items || [];
+          const filtrados = listaAlimentos.filter(a => {
+            const z = a.segmento || a.Segmento_Inicial || "";
+            const cant = a.cantRestante !== undefined ? parseFloat(a.cantRestante) : parseFloat(a.Cantidad_Restante || 0);
+            return z.toLowerCase() === zonaBaja.toLowerCase() && cant > 0;
+          });
           
           if (filtrados.length === 0) {
             safeSendMessage(chatId, `✨ No se detectan existencias remanentes en la zona: ${zonaBaja}.`, mainKeyboard);
             delete userSessions[chatId];
             return;
           }
-          const filasBotones = filtrados.map(a => [{ text: `• ${a.alimento} (${a.cantRestante} ${a.unidad})`, callback_data: `bajaId_${a.id}` }]);
+          // Limitar a máximo 20 botones para evitar desbordes visuales o de tamaño en Telegram
+          const filasBotones = filtrados.slice(0, 20).map(a => {
+            const nom = a.alimento || a.Alimento || "Producto";
+            const cant = a.cantRestante !== undefined ? a.cantRestante : (a.Cantidad_Restante || 0);
+            const und = a.unidad || a.Unidad || "Unid.";
+            const idLote = a.id || a.id_Lote || a.Lote || "";
+            return [{ text: `• ${nom} (${cant} ${und})`, callback_data: `bajaId_${idLote}` }];
+          });
           safeSendMessage(chatId, "Selecciona el lote específico que deseas gestionar:", { reply_markup: { inline_keyboard: filasBotones } });
         } else {
           safeSendMessage(chatId, "⚠️ Error estructural al interrogar el inventario activo.", mainKeyboard);
@@ -308,7 +333,7 @@ bot.on('callback_query', async (query) => {
     }
     if (data.startsWith("bajaId_")) {
       if (!session) return;
-      session.alimentoId = data.split("_")[1];
+      session.alimentoId = data.replace("bajaId_", "");
       session.step = "RETIRAR_CANTIDAD";
       
       try { await bot.deleteMessage(chatId, messageId); } catch(e){}
@@ -324,8 +349,10 @@ bot.on('callback_query', async (query) => {
       try {
         const res = await api.post(process.env.URL_SHEET, {
           action: "baja",
-          id: session.alimentoId,
-          cantidadRetirar: session.cantidadRetirar,
+          id_Lote: session.alimentoId,
+          lote: session.alimentoId,
+          cantidad: session.cantidadRetirar,
+          cantidad_baja: session.cantidadRetirar,
           destino: destinoBaja
         });
         
@@ -371,6 +398,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('MOAD Engine Activo y Operando en Modo Webhook Nivel Emisario\n');
   }
+});
+
+server.listen(PORT, () => {
+  console.log(`📡 Servidor de Webhooks MOAD escuchando en el puerto ${PORT}`);
 });
 
 server.listen(PORT, () => {
