@@ -55,20 +55,16 @@ const mainKeyboard = {
 async function safeSendMessage(chatId, text, options = {}) {
   try {
     if (text && text.length > 3800) {
-      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente por exceder el límite de caracteres de Telegram]*";
+      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado]*";
     }
     return await bot.sendMessage(chatId, text, options);
   } catch (err) {
-    console.error(`Error enviando mensaje a ${chatId}:`, err.message);
-    // Si falla por formato Markdown u otro motivo, reintentamos enviarlo como texto plano para que no muera
-    try {
-      delete options.parse_mode;
-      return await bot.sendMessage(chatId, text, options);
-    } catch (e2) {
-      return null;
-    }
+    console.error(`🚨 ERROR 400 DETALLADO en chatId ${chatId}:`, err.response?.body || err.message);
+    console.error(`📝 Texto que causó el fallo (${text ? text.length : 0} caracteres):`, text ? text.substring(0, 100) : 'VACÍO');
+    return null;
   }
 }
+
 
 // Función auxiliar para solicitar la zona de almacenamiento
 function solicitarSegmento(chatId) {
