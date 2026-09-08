@@ -51,16 +51,22 @@ const mainKeyboard = {
   }
 };
 
-// Función auxiliar segura para el envío de mensajes
+// Función auxiliar ultrasegura para el envío de mensajes (corta textos largos y previene el error 400)
 async function safeSendMessage(chatId, text, options = {}) {
   try {
     if (text && text.length > 3800) {
-      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente]*";
+      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente por exceder el límite de caracteres de Telegram]*";
     }
     return await bot.sendMessage(chatId, text, options);
   } catch (err) {
     console.error(`Error enviando mensaje a ${chatId}:`, err.message);
-    return null;
+    // Si falla por formato Markdown u otro motivo, reintentamos enviarlo como texto plano para que no muera
+    try {
+      delete options.parse_mode;
+      return await bot.sendMessage(chatId, text, options);
+    } catch (e2) {
+      return null;
+    }
   }
 }
 
