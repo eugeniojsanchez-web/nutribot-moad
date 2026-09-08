@@ -7,9 +7,12 @@ const token = process.env.TELEGRAM_TOKEN;
 const PORT = process.env.PORT || 10000;
 const url = 'https://nutribot-moad.onrender.com'; // URL de tu servicio en Render
 
-// Inicialización del bot en modo Webhook para Render
-const bot = new TelegramBot(token, { webHook: { port: PORT } });
-bot.setWebHook(`${url}/bot${token}`);
+// Inicialización limpia del bot para Webhook manual (sin servidor interno duplicado)
+const bot = new TelegramBot(token, { polling: false });
+
+// Forzar la actualización del Webhook hacia Render al arrancar
+bot.setWebHook(`${url}/bot${token}`).catch(err => console.error("Error configurando Webhook:", err.message));
+
 
 // Configuración de la API para conectar con Google Sheets
 const api = axios.create({
