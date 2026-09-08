@@ -1,18 +1,14 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
-const http = require('http');
 
 // Configuración de variables de entorno
 const token = process.env.TELEGRAM_TOKEN;
-const PORT = process.env.PORT || 10000;
-const url = 'https://nutribot-moad.onrender.com'; // URL de tu servicio en Render
 
-// Inicialización limpia del bot para Webhook manual (sin servidor interno duplicado)
-const bot = new TelegramBot(token, { polling: false });
+// Inicialización directa en modo Polling (evita conflictos de puertos y webhooks en Render)
+const bot = new TelegramBot(token, { polling: true });
 
-// Forzar la actualización del Webhook hacia Render al arrancar
-bot.setWebHook(`${url}/bot${token}`).catch(err => console.error("Error configurando Webhook:", err.message));
-
+// Forzar la limpieza de cualquier webhook previo para que Telegram acepte el polling de inmediato
+bot.deleteWebHook().catch(() => {});
 
 // Configuración de la API para conectar con Google Sheets
 const api = axios.create({
@@ -39,7 +35,6 @@ const mainKeyboard = {
 // Función auxiliar segura para el envío de mensajes (con control anti-desborde)
 async function safeSendMessage(chatId, text, options = {}) {
   try {
-    // Protección estricta contra el límite de 4096 caracteres de Telegram
     if (text && text.length > 3800) {
       text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente por exceder el límite de longitud permitida]*";
     }
@@ -161,7 +156,7 @@ bot.on('message', async (msg) => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "🗓️ Última Semana (7 días)", callback_data: "an_7" }, { text: "📅 Último Mes (30 días)", callback_data: "an_30" }],
-          [{ text: "📊 Trimestre (90 days)", callback_data: "an_90" }, { text: "📈 Año Completo (365 días)", callback_data: "an_365" }]
+          [{ text: "📊 Trimestre (90 días)", callback_data: "an_90" }, { text: "📈 Año Completo (365 días)", callback_data: "an_365" }]
         ]
       }
     };
@@ -315,7 +310,6 @@ bot.on('callback_query', async (query) => {
             delete userSessions[chatId];
             return;
           }
-          // Limitar a máximo 20 botones para evitar desbordes visuales o de tamaño en Telegram
           const filasBotones = filtrados.slice(0, 20).map(a => {
             const nom = a.alimento || a.Alimento || "Producto";
             const cant = a.cantRestante !== undefined ? a.cantRestante : (a.Cantidad_Restante || 0);
@@ -380,33 +374,4 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-// ====================================================================
-// 🌐 SERVIDOR DE WEBHOOKS INTEGRADO (Para Render Web Service)
-// ====================================================================
-const server = http.createServer((req, res) => {
-  if (req.method === 'POST' && req.url === `/bot${token}`) {
-    let body = '';
-    req.on('data', chunk => { body += chunk.toString(); });
-    req.on('end', () => {
-      try {
-        const obj = JSON.parse(body);
-        bot.processUpdate(obj);
-      } catch (e) {
-        console.error("Fallo crítico parseando Update de Telegram:", e.message);
-      }
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('OK');
-    });
-  } else {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('MOAD Engine Activo y Operando en Modo Webhook Nivel Emisario\n');
-  }
-});
-
-server.listen(PORT, () => {
-  console.log(`📡 Servidor de Webhooks MOAD escuchando en el puerto ${PORT}`);
-});
-
-server.listen(PORT, () => {
-  console.log(`📡 Servidor de Webhooks MOAD escuchando en el puerto ${PORT}`);
-});
+console.log("📡 Bot MOAD iniciado correctamente en modo Polling.");
