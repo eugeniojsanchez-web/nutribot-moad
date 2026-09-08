@@ -1,14 +1,33 @@
 const TelegramBot = require('node-telegram-bot-api');
+const express = require('express');
 const axios = require('axios');
 
-// Configuración de variables de entorno
+// Configuración de variables
 const token = process.env.TELEGRAM_TOKEN;
+const PORT = process.env.PORT || 10000;
+const URL_RENDER = process.env.RENDER_EXTERNAL_URL || 'https://bot-moad.onrender.com';
 
-// Inicialización directa en modo Polling (evita conflictos de puertos y webhooks en Render)
-const bot = new TelegramBot(token, { polling: true });
+// Inicialización del bot usando Webhook (ideal para Render, adiós al error 409)
+const bot = new TelegramBot(token, { webHook: true });
+bot.setWebHook(`${URL_RENDER}/bot${token}`);
 
-// Forzar la limpieza de cualquier webhook previo para que Telegram acepte el polling de inmediato
-bot.deleteWebHook().catch(() => {});
+// Servidor web Express para recibir los mensajes y botones de Telegram
+const app = express();
+app.use(express.json());
+
+app.post(`/bot${token}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// Ruta básica para que Render sepa que el servicio está vivo
+app.get('/', (req, res) => {
+  res.send('Bot MOAD Operativo: Servidor Webhook Activo.');
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor escuchando en el puerto ${PORT}`);
+});
 
 // Configuración de la API para conectar con Google Sheets
 const api = axios.create({
@@ -32,11 +51,11 @@ const mainKeyboard = {
   }
 };
 
-// Función auxiliar segura para el envío de mensajes (con control anti-desborde)
+// Función auxiliar segura para el envío de mensajes
 async function safeSendMessage(chatId, text, options = {}) {
   try {
     if (text && text.length > 3800) {
-      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente por exceder el límite de longitud permitida]*";
+      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente]*";
     }
     return await bot.sendMessage(chatId, text, options);
   } catch (err) {
@@ -69,7 +88,7 @@ bot.on('message', async (msg) => {
 
   if (text === '/start') {
     delete userSessions[chatId];
-    return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario sin bloqueos.", { parse_mode: "Markdown", ...mainKeyboard });
+    return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
   // 🔍 MENU: Consultar Inventario
@@ -106,10 +125,10 @@ bot.on('message', async (msg) => {
           safeSendMessage(chatId, "✨ El inventario está vacío actualmente.");
         }
       } else {
-        safeSendMessage(chatId, "⚠️ Error de comunicación: Google Sheets no devolvió los datos correctamente.");
+        safeSendMessage(chatId, "⚠️ Error de comunicación con Google Sheets.");
       }
     } catch (e) { 
-      safeSendMessage(chatId, "❌ La consulta tardó demasiado o la base de datos no responde."); 
+      safeSendMessage(chatId, "❌ La consulta tardó demasiado."); 
     }
     return;
   }
@@ -119,12 +138,12 @@ bot.on('message', async (msg) => {
     try {
       const res = await api.post(process.env.URL_SHEET, { action: "balance" });
       if (res.data && res.data.balance) {
-        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas (Desperdiciado): *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown" });
+        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown" });
       } else {
         safeSendMessage(chatId, "⚠️ No se han podido calcular los balances actuales.");
       }
     } catch(err) {
-      safeSendMessage(chatId, "❌ Error al obtener el balance desde Google Sheets.");
+      safeSendMessage(chatId, "❌ Error al obtener el balance.");
     }
     return;
   }
@@ -143,14 +162,14 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 🥗 MENU: Recetas (Informativo de flujo)
+  // 🥗 MENU: Recetas
   if (text === "🥗 Menú Recetas") {
     const tRec = { reply_markup: { inline_keyboard: [[{ text: "🚨 Uso Inmediato", callback_data: "rec_urgente" }], [{ text: "🍲 Ideas por Zona", callback_data: "rec_zona" }], [{ text: "✨ Receta con Sobras", callback_data: "rec_sobras" }]] } };
     safeSendMessage(chatId, "🥗 *Planificación y Aprovechamiento:*", tRec);
     return;
   }
 
-  // 📊 MENU: Optimizar Cesta por IA (Informativo de flujo)
+  // 📊 MENU: Optimizar Cesta por IA
   if (text === "📊 Optimizar Cesta (IA)") {
     const tAnalisis = {
       reply_markup: {
@@ -160,11 +179,11 @@ bot.on('message', async (msg) => {
         ]
       }
     };
-    safeSendMessage(chatId, "📊 *Inteligencia de Consumo*\n\nSelecciona la ventana temporal para evaluar existencias:", { parse_mode: "Markdown", ...tAnalisis });
+    safeSendMessage(chatId, "📊 *Inteligencia de Consumo*\n\nSelecciona la ventana temporal:", { parse_mode: "Markdown", ...tAnalisis });
     return;
   }
 
-  // Máquina de estados conversacionales (Flujos guiados)
+  // Máquina de estados conversacionales
   const session = userSessions[chatId];
   if (!session) return;
 
@@ -188,13 +207,13 @@ bot.on('message', async (msg) => {
     if (session.step === "UNIDAD") {
       session.unidad = text; 
       session.step = "PRECIO";
-      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 4.50 o 0 si es un regalo):`);
+      await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 4.50 o 0):`);
       return;
     }
     
     if (session.step === "PRECIO") {
       const pNum = parseFloat(text.replace(',', '.'));
-      if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Por favor introduce un número válido:");
+      if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número válido:");
       session.precio = pNum; 
       session.step = "CADUCIDAD_OPCION"; 
       
@@ -221,7 +240,7 @@ bot.on('message', async (msg) => {
     }
   } catch(err) {
     console.error("Error en la máquina de estados:", err.message);
-    safeSendMessage(chatId, "⚠️ Ocurrió un error al procesar el flujo. Operación cancelada.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ Ocurrió un error al procesar el flujo.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
@@ -281,7 +300,7 @@ bot.on('callback_query', async (query) => {
         }
       } catch(errSheet) {
         if (msgEnviando) { try { await bot.deleteMessage(chatId, msgEnviando.message_id); } catch(e){} }
-        safeSendMessage(chatId, "❌ Falla de red severa al intentar persistir los datos en Google Sheets.", mainKeyboard);
+        safeSendMessage(chatId, "❌ Error de red al intentar persistir los datos.", mainKeyboard);
       }
       delete userSessions[chatId];
       return;
@@ -306,7 +325,7 @@ bot.on('callback_query', async (query) => {
           });
           
           if (filtrados.length === 0) {
-            safeSendMessage(chatId, `✨ No se detectan existencias remanentes en la zona: ${zonaBaja}.`, mainKeyboard);
+            safeSendMessage(chatId, `✨ No se detectan existencias en la zona: ${zonaBaja}.`, mainKeyboard);
             delete userSessions[chatId];
             return;
           }
@@ -319,11 +338,11 @@ bot.on('callback_query', async (query) => {
           });
           safeSendMessage(chatId, "Selecciona el lote específico que deseas gestionar:", { reply_markup: { inline_keyboard: filasBotones } });
         } else {
-          safeSendMessage(chatId, "⚠️ Error estructural al interrogar el inventario activo.", mainKeyboard);
+          safeSendMessage(chatId, "⚠️ Error estructural al interrogar el inventario.", mainKeyboard);
         }
       } catch (errList) {
         if (msgCarga) { try { await bot.deleteMessage(chatId, msgCarga.message_id); } catch(e){} }
-        safeSendMessage(chatId, "❌ Error crítico de comunicación al recuperar listados.", mainKeyboard);
+        safeSendMessage(chatId, "❌ Error de comunicación al recuperar listados.", mainKeyboard);
         delete userSessions[chatId];
       }
       return;
@@ -356,22 +375,20 @@ bot.on('callback_query', async (query) => {
         if (msgProcesandoBaja) { try { await bot.deleteMessage(chatId, msgProcesandoBaja.message_id); } catch(e){} }
         
         if (res.data && res.data.status === "success") {
-          safeSendMessage(chatId, `📉 *¡Baja asentada correctamente!*\n\nSe extrajeron *${session.cantidadRetirar}* unidades. Destino contable: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+          safeSendMessage(chatId, `📉 *¡Baja asentada correctamente!*\n\nSe extrajeron *${session.cantidadRetirar}* unidades. Destino: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
         } else {
-          safeSendMessage(chatId, `⚠️ Denegado por la base de datos: ${res.data.message || 'Error desconocido'}.`, mainKeyboard);
+          safeSendMessage(chatId, `⚠️ Denegado por la base de datos.`, mainKeyboard);
         }
       } catch(errBajaEj) {
         if (msgProcesandoBaja) { try { await bot.deleteMessage(chatId, msgProcesandoBaja.message_id); } catch(e){} }
-        safeSendMessage(chatId, "❌ Error de sincronización extrema: El servidor Sheets no responde.", mainKeyboard);
+        safeSendMessage(chatId, "❌ Error de sincronización con Google Sheets.", mainKeyboard);
       }
       delete userSessions[chatId];
       return;
     }
   } catch (errCallback) {
     console.error("Error en gestor callback:", errCallback.message);
-    safeSendMessage(chatId, "⚠️ Operación interrumpida prematuramente.", mainKeyboard);
+    safeSendMessage(chatId, "⚠️ Operación interrumpida.", mainKeyboard);
     delete userSessions[chatId];
   }
 });
-
-console.log("📡 Bot MOAD iniciado correctamente en modo Polling.");
