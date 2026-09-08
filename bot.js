@@ -7,7 +7,7 @@ const token = process.env.TELEGRAM_TOKEN;
 const PORT = process.env.PORT || 10000;
 const URL_RENDER = process.env.RENDER_EXTERNAL_URL || 'https://bot-moad.onrender.com';
 
-// Inicialización del bot usando Webhook (ideal para Render, adiós al error 409)
+// Inicialización del bot usando Webhook nativo en Render
 const bot = new TelegramBot(token, { webHook: true });
 bot.setWebHook(`${URL_RENDER}/bot${token}`);
 
@@ -20,7 +20,7 @@ app.post(`/bot${token}`, (req, res) => {
   res.sendStatus(200);
 });
 
-// Ruta básica para que Render sepa que el servicio está vivo
+// Ruta básica de salud para Render
 app.get('/', (req, res) => {
   res.send('Bot MOAD Operativo: Servidor Webhook Activo.');
 });
@@ -51,20 +51,41 @@ const mainKeyboard = {
   }
 };
 
-// Función auxiliar ultrasegura para el envío de mensajes (corta textos largos y previene el error 400)
+// Función auxiliar segura para el envío de mensajes (Anti-desborde de caracteres)
 async function safeSendMessage(chatId, text, options = {}) {
+  try {
+    if (text && text.length > 3800) {
+      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente]*";
+    }
+    return await bot.sendMessage(chatId, text, options);
+  } catch (err) {
+    console.error(`Error enviando mensaje a ${chatId}:`, err.message);
+    try {
+      delete options.parse_mode;
+      return await bot.sendMessage(chatId, text, options);
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+// Función auxiliar segura para la EDICIÓN de mensajes (Previene errores 400 Bad Request)
+async function safeEditMessageText(text, options = {}) {
   try {
     if (text && text.length > 3800) {
       text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado]*";
     }
-    return await bot.sendMessage(chatId, text, options);
+    return await bot.editMessageText(text, options);
   } catch (err) {
-    console.error(`🚨 ERROR 400 DETALLADO en chatId ${chatId}:`, err.response?.body || err.message);
-    console.error(`📝 Texto que causó el fallo (${text ? text.length : 0} caracteres):`, text ? text.substring(0, 100) : 'VACÍO');
-    return null;
+    console.error(`Error editando mensaje:`, err.message);
+    try {
+      delete options.parse_mode;
+      return await bot.editMessageText(text, options);
+    } catch (e2) {
+      return null;
+    }
   }
 }
-
 
 // Función auxiliar para solicitar la zona de almacenamiento
 function solicitarSegmento(chatId) {
@@ -394,3 +415,5 @@ bot.on('callback_query', async (query) => {
     delete userSessions[chatId];
   }
 });
+
+console.log("📡 Bot MOAD iniciado correctamente en modo Webhook.");
