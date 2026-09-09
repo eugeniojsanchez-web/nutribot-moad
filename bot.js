@@ -1,48 +1,40 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const http = require('http');
 
-// Configuración de variables
 const token = process.env.TELEGRAM_TOKEN;
 
 if (!token) {
-  console.error("❌ ERROR CRÍTICO: Falta la variable de entorno TELEGRAM_TOKEN en Render.");
+  console.error("❌ ERROR CRÍTICO: Falta la variable TELEGRAM_TOKEN en Render.");
   process.exit(1);
 }
 
-// Inicialización estricta en modo POLLING limpio (evita cualquier conflicto de Webhook residual)
+// Inicialización única con control estricto de una sola instancia
 const bot = new TelegramBot(token, { 
-  polling: {
-    interval: 2000,
-    autoStart: true,
-    params: {
-      allowed_updates: ["message", "callback_query"]
-    }
-  } 
+  polling: true 
 });
 
-console.log("🤖 Bot MOAD iniciado correctamente en modo Polling limpio.");
+console.log("🤖 Bot MOAD: Instancia única de Polling iniciada correctamente.");
 
-// Servidor HTTP ultra sencillo solo para que Render mantenga el servicio activo (puerto 10000)
-const http = require('http');
+// Servidor HTTP simple y obligatorio para que Render mantenga el servicio activo (Puerto 10000)
 const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Bot MOAD Operativo y Saludable.\n');
-});
-server.listen(PORT, () => {
-  console.log(`🌐 Servidor HTTP de mantenimiento escuchando en el puerto ${PORT}`);
+  res.end('Bot MOAD Operativo.\n');
 });
 
-// Configuración de la API para conectar con Google Sheets
+server.listen(PORT, () => {
+  console.log(`🌐 Servidor HTTP escuchando en el puerto ${PORT}`);
+});
+
+// Configuración de la API para Google Sheets
 const api = axios.create({
   timeout: 15000, 
   headers: { 'Content-Type': 'application/json' }
 });
 
-// Almacenamiento temporal de estados de usuario
 const userSessions = {};
 
-// Teclado principal de la aplicación
 const mainKeyboard = {
   reply_markup: {
     keyboard: [
@@ -55,7 +47,6 @@ const mainKeyboard = {
   }
 };
 
-// Función ultrasegura para enviar mensajes largos (corta automáticamente si supera el límite)
 async function safeSendMessage(chatId, text, options = {}) {
   try {
     if (text && text.length > 3800) {
@@ -73,16 +64,12 @@ async function safeSendMessage(chatId, text, options = {}) {
   }
 }
 
-// Función auxiliar segura para borrar mensajes
 async function safeDeleteMessage(chatId, messageId) {
   try {
     await bot.deleteMessage(chatId, messageId);
-  } catch (e) {
-    // Se ignora si el mensaje ya no existe
-  }
+  } catch (e) {}
 }
 
-// Función auxiliar para solicitar la zona de almacenamiento
 function solicitarSegmento(chatId) {
   const mSeg = {
     reply_markup: {
@@ -96,9 +83,6 @@ function solicitarSegmento(chatId) {
   safeSendMessage(chatId, "Selecciona la zona de conservación:", mSeg);
 }
 
-// ====================================================================
-// 📥 GESTOR DE MENSAJES ENTRANTE (TEXTO)
-// ====================================================================
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -109,7 +93,6 @@ bot.on('message', async (msg) => {
     return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
-  // 🔍 MENU: Consultar Inventario
   if (text === "🔍 Consultar Inventario") {
     try {
       const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos de MOAD...");
@@ -151,7 +134,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 📈 MENU: Ver Balance de Mermas
   if (text === "📈 Ver Balance Mermas") {
     try {
       const res = await api.post(process.env.URL_SHEET, { action: "balance" });
@@ -166,28 +148,24 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // 📥 MENU: Registrar Compra
   if (text === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
     safeSendMessage(chatId, "✍️ Escribe el nombre del alimento:");
     return;
   }
 
-  // 🍳 MENU: Gestionar Alimento (Consumo/Baja)
   if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
     const mBaja = { reply_markup: { inline_keyboard: [[{ text: "🥦 Nevera", callback_data: "bajaZona_Nevera" }], [{ text: "📦 Despensa", callback_data: "bajaZona_Despensa" }], [{ text: "❄️ Congelador", callback_data: "bajaZona_Congelador" }]] } };
     safeSendMessage(chatId, "¿De qué zona de conservación vas a retirar el alimento?", mBaja);
     return;
   }
 
-  // 🥗 MENU: Recetas
   if (text === "🥗 Menú Recetas") {
     const tRec = { reply_markup: { inline_keyboard: [[{ text: "🚨 Uso Inmediato", callback_data: "rec_urgente" }], [{ text: "🍲 Ideas por Zona", callback_data: "rec_zona" }], [{ text: "✨ Receta con Sobras", callback_data: "rec_sobras" }]] } };
     safeSendMessage(chatId, "🥗 *Planificación y Aprovechamiento:*", tRec);
     return;
   }
 
-  // 📊 MENU: Optimizar Cesta por IA
   if (text === "📊 Optimizar Cesta (IA)") {
     const tAnalisis = {
       reply_markup: {
@@ -201,7 +179,6 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Máquina de estados conversacionales
   const session = userSessions[chatId];
   if (!session) return;
 
@@ -263,9 +240,6 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ====================================================================
-// 🎛️ GESTOR DE LLAMADAS CALLBACK (BOTONES EN LÍNEA)
-// ====================================================================
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
