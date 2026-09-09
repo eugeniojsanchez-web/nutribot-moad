@@ -1,31 +1,36 @@
 const TelegramBot = require('node-telegram-bot-api');
-const express = require('express');
 const axios = require('axios');
 
 // Configuración de variables
 const token = process.env.TELEGRAM_TOKEN;
+
+if (!token) {
+  console.error("❌ ERROR CRÍTICO: Falta la variable de entorno TELEGRAM_TOKEN en Render.");
+  process.exit(1);
+}
+
+// Inicialización estricta en modo POLLING limpio (evita cualquier conflicto de Webhook residual)
+const bot = new TelegramBot(token, { 
+  polling: {
+    interval: 2000,
+    autoStart: true,
+    params: {
+      allowed_updates: ["message", "callback_query"]
+    }
+  } 
+});
+
+console.log("🤖 Bot MOAD iniciado correctamente en modo Polling limpio.");
+
+// Servidor HTTP ultra sencillo solo para que Render mantenga el servicio activo (puerto 10000)
+const http = require('http');
 const PORT = process.env.PORT || 10000;
-const URL_RENDER = process.env.RENDER_EXTERNAL_URL || 'https://bot-moad.onrender.com';
-
-// Inicialización del bot usando Webhook nativo en Render
-const bot = new TelegramBot(token, { webHook: true });
-bot.setWebHook(`${URL_RENDER}/bot${token}`);
-
-// Servidor web Express para recibir los mensajes de Telegram
-const app = express();
-app.use(express.json());
-
-app.post(`/bot${token}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot MOAD Operativo y Saludable.\n');
 });
-
-app.get('/', (req, res) => {
-  res.send('Bot MOAD Operativo: Servidor Webhook Activo.');
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor escuchando en el puerto ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`🌐 Servidor HTTP de mantenimiento escuchando en el puerto ${PORT}`);
 });
 
 // Configuración de la API para conectar con Google Sheets
@@ -68,12 +73,12 @@ async function safeSendMessage(chatId, text, options = {}) {
   }
 }
 
-// Función auxiliar segura para borrar mensajes sin romper la ejecución si ya no existen
+// Función auxiliar segura para borrar mensajes
 async function safeDeleteMessage(chatId, messageId) {
   try {
     await bot.deleteMessage(chatId, messageId);
   } catch (e) {
-    // Se ignora silenciosamente si el mensaje ya fue borrado o no se puede modificar
+    // Se ignora si el mensaje ya no existe
   }
 }
 
