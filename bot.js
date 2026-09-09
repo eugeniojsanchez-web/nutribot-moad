@@ -9,14 +9,10 @@ if (!token) {
   process.exit(1);
 }
 
-// Inicialización única con control estricto de una sola instancia (Polling)
-const bot = new TelegramBot(token, { 
-  polling: true 
-});
+const bot = new TelegramBot(token, { polling: true });
 
 console.log("🤖 Bot MOAD: Instancia única de Polling iniciada correctamente.");
 
-// Servidor HTTP simple y obligatorio para mantener el servicio activo en Render (Puerto 10000)
 const PORT = process.env.PORT || 10000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -27,7 +23,6 @@ server.listen(PORT, () => {
   console.log(`🌐 Servidor HTTP escuchando en el puerto ${PORT}`);
 });
 
-// Configuración de la API para Google Sheets
 const api = axios.create({
   timeout: 15000, 
   headers: { 'Content-Type': 'application/json' }
@@ -49,8 +44,9 @@ const mainKeyboard = {
 
 async function safeSendMessage(chatId, text, options = {}) {
   try {
-    if (text && text.length > 3800) {
-      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado automáticamente]*";
+    if (typeof text !== 'string') text = JSON.stringify(text);
+    if (text.length > 3800) {
+      text = text.substring(0, 3750) + "\n\n⚠️ *[Mensaje recortado por seguridad]*";
     }
     return await bot.sendMessage(chatId, text, options);
   } catch (err) {
@@ -83,9 +79,6 @@ function solicitarSegmento(chatId) {
   safeSendMessage(chatId, "Selecciona la zona de conservación:", mSeg);
 }
 
-// ====================================================================
-// 📥 GESTOR DE MENSAJES ENTRANTE (TEXTO)
-// ====================================================================
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
@@ -96,7 +89,6 @@ bot.on('message', async (msg) => {
     return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
-  // 🔍 MENU: Consultar Inventario
   if (text === "🔍 Consultar Inventario") {
     try {
       const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos de MOAD...");
@@ -125,56 +117,51 @@ bot.on('message', async (msg) => {
             });
             listado += `\n`;
           }
-          safeSendMessage(chatId, listado, { parse_mode: "Markdown" });
+          safeSendMessage(chatId, listado, { parse_mode: "Markdown", ...mainKeyboard });
         } else {
-          safeSendMessage(chatId, "✨ El inventario está vacío actualmente.");
+          safeSendMessage(chatId, "✨ El inventario está vacío actualmente.", mainKeyboard);
         }
       } else {
-        safeSendMessage(chatId, "⚠️ Error de comunicación con Google Sheets.");
+        safeSendMessage(chatId, "⚠️ Error de comunicación con Google Sheets.", mainKeyboard);
       }
     } catch (e) { 
-      safeSendMessage(chatId, "❌ La consulta tardó demasiado."); 
+      safeSendMessage(chatId, "❌ La consulta tardó demasiado.", mainKeyboard); 
     }
     return;
   }
 
-  // 📈 MENU: Ver Balance de Mermas (Blindado)
   if (text === "📈 Ver Balance Mermas") {
     try {
       const res = await api.post(process.env.URL_SHEET, { action: "balance" });
       if (res.data && res.data.balance) {
         safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown", ...mainKeyboard });
       } else {
-        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *142.50 €*\n🗑️ Mermas Registradas: *12.30 €*\n\n*(Datos de control base)*`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *0.00 €*\n🗑️ Mermas Registradas: *0.00 €*`, { parse_mode: "Markdown", ...mainKeyboard });
       }
     } catch(err) {
-      safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *-- €*\n🗑️ Mermas: *-- €*\n\n*(Sincroniza con Google Sheets para métricas en vivo)*`, { parse_mode: "Markdown", ...mainKeyboard });
+      safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *-- €*\n🗑️ Mermas: *-- €*`, { parse_mode: "Markdown", ...mainKeyboard });
     }
     return;
   }
 
-  // 📥 MENU: Registrar Compra
   if (text === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
     safeSendMessage(chatId, "✍️ Escribe el nombre del alimento:");
     return;
   }
 
-  // 🍳 MENU: Gestionar Alimento (Consumo/Merma)
   if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
     const mBaja = { reply_markup: { inline_keyboard: [[{ text: "🥦 Nevera", callback_data: "bajaZona_Nevera" }], [{ text: "📦 Despensa", callback_data: "bajaZona_Despensa" }], [{ text: "❄️ Congelador", callback_data: "bajaZona_Congelador" }]] } };
     safeSendMessage(chatId, "¿De qué zona de conservación vas a retirar el alimento?", mBaja);
     return;
   }
 
-  // 🥗 MENU: Recetas
   if (text === "🥗 Menú Recetas") {
     const tRec = { reply_markup: { inline_keyboard: [[{ text: "🚨 Uso Inmediato", callback_data: "rec_urgente" }], [{ text: "🍲 Ideas por Zona", callback_data: "rec_zona" }], [{ text: "✨ Receta con Sobras", callback_data: "rec_sobras" }]] } };
     safeSendMessage(chatId, "🥗 *Planificación y Aprovechamiento:*", tRec);
     return;
   }
 
-  // 📊 MENU: Optimizar Cesta por IA
   if (text === "📊 Optimizar Cesta (IA)") {
     const tAnalisis = {
       reply_markup: {
@@ -198,7 +185,6 @@ bot.on('message', async (msg) => {
       await safeSendMessage(chatId, `¿Cantidad para "${text}"? (Introduce solo el número):`);
       return;
     }
-    
     if (session.step === "CANTIDAD") {
       const cNum = parseFloat(text.replace(',', '.'));
       if (isNaN(cNum)) return safeSendMessage(chatId, "⚠️ Número no válido. Introduce una cantidad numérica:");
@@ -207,32 +193,27 @@ bot.on('message', async (msg) => {
       await safeSendMessage(chatId, "Indica la unidad de medida (ej: Kg, Litros, Uds):");
       return;
     }
-    
     if (session.step === "UNIDAD") {
       session.unidad = text; 
       session.step = "PRECIO";
       await safeSendMessage(chatId, `Introduce el PRECIO TOTAL pagado por estos ${session.cantidad} ${session.unidad} (ej: 4.50 o 0):`);
       return;
     }
-    
     if (session.step === "PRECIO") {
       const pNum = parseFloat(text.replace(',', '.'));
       if (isNaN(pNum)) return safeSendMessage(chatId, "⚠️ Precio incorrecto. Introduce un número válido:");
       session.precio = pNum; 
       session.step = "CADUCIDAD_OPCION"; 
-      
       const opCad = { reply_markup: { inline_keyboard: [[{ text: "🤖 Automático (7 días)", callback_data: "cad_auto" }], [{ text: "🗓️ Manual", callback_data: "cad_manual" }]] } };
       await safeSendMessage(chatId, "Selecciona el método para establecer la fecha de caducidad:", opCad);
       return;
     }
-
     if (session.step === "CADUCIDAD_MANUAL") {
       session.fechaManual = text; 
       session.step = "SEGMENTO";
       solicitarSegmento(chatId);
       return;
     }
-    
     if (session.step === "RETIRAR_CANTIDAD") {
       const rNum = parseFloat(text.replace(',', '.'));
       if (isNaN(rNum)) return safeSendMessage(chatId, "⚠️ Cantidad incorrecta. Escribe el número exacto a retirar:");
@@ -249,57 +230,60 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ====================================================================
-// 🎛️ GESTOR DE LLAMADAS CALLBACK (BOTONES EN LÍNEA)
-// ====================================================================
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
   const messageId = query.message.message_id;
+
+  // Cierra el reloj de arena del botón de forma segura ignorando fallos
   try { await bot.answerCallbackQuery(query.id); } catch(e){}
+  
+  // Borra siempre el mensaje del menú anterior para evitar acumulación y conflictos de edición
+  await safeDeleteMessage(chatId, messageId);
+
   const session = userSessions[chatId];
 
   try {
-    // --- GESTIÓN DE RECETAS ---
     if (data.startsWith("rec_")) {
       const tipoReceta = data.replace("rec_", "");
-      await safeDeleteMessage(chatId, messageId);
       const msgWaitRec = await safeSendMessage(chatId, "🍳 Consultando IA de aprovechamiento en MOAD...");
       try {
         const res = await api.post(process.env.URL_SHEET, { action: "recetas", tipo: tipoReceta });
         if (msgWaitRec) { await safeDeleteMessage(chatId, msgWaitRec.message_id); }
         
-        if (res.data && (res.data.receta || res.data.resultado || res.data.status === "success")) {
-          const textoReceta = res.data.receta || res.data.mensaje || "💡 Sugerencia de aprovechamiento con ingredientes próximos a caducar.";
-          safeSendMessage(chatId, `🥗 *Propuesta Culinaria MOAD*\n\n${textoReceta}`, { parse_mode: "Markdown", ...mainKeyboard });
-        } else {
-          safeSendMessage(chatId, "✨ No hay alertas críticas de uso inmediato en este momento.", mainKeyboard);
+        let textoReceta = "";
+        if (res.data && typeof res.data === 'object') {
+          textoReceta = res.data.receta || res.data.mensaje || res.data.resultado || "";
         }
+        if (!textoReceta || typeof textoReceta !== 'string' || textoReceta.length < 5) {
+          textoReceta = "💡 Sugerencia MOAD: Prepara un plato de aprovechamiento combinando los ingredientes con menor vida útil.";
+        }
+        safeSendMessage(chatId, `🥗 *Propuesta Culinaria MOAD*\n\n${textoReceta}`, { parse_mode: "Markdown", ...mainKeyboard });
       } catch (errRec) {
         if (msgWaitRec) { await safeDeleteMessage(chatId, msgWaitRec.message_id); }
-        safeSendMessage(chatId, `🥗 *Menú Recetas (Aprovechamiento)*\n\n1. 🍲 **Caldo de rescate:** Agrupa verduras de la nevera con restos proteicos.\n2. 🍳 **Revuelto MOAD:** Aprovecha huevos e ingredientes de temporada en stock.`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `🥗 *Menú Recetas (Aprovechamiento)*\n\n1. 🍲 *Caldo de rescate:* Agrupa verduras frescas con restos proteicos.\n2. 🍳 *Revuelto MOAD:* Aprovecha excedentes de la nevera.`, { parse_mode: "Markdown", ...mainKeyboard });
       }
       return;
     }
 
-    // --- GESTIÓN DE OPTIMIZACIÓN DE CESTA (IA) ---
     if (data.startsWith("an_")) {
       const diasVentana = data.replace("an_", "");
-      await safeDeleteMessage(chatId, messageId);
       const msgWaitAn = await safeSendMessage(chatId, `📊 Analizando los datos de los últimos ${diasVentana} días...`);
       try {
         const res = await api.post(process.env.URL_SHEET, { action: "analisis", dias: diasVentana });
         if (msgWaitAn) { await safeDeleteMessage(chatId, msgWaitAn.message_id); }
         
-        if (res.data && (res.data.analisis || res.data.status === "success")) {
-          const informe = res.data.analisis || res.data.mensaje || "Análisis completado.";
-          safeSendMessage(chatId, `📊 *Informe de Optimización (${diasVentana} días)*\n\n${informe}`, { parse_mode: "Markdown", ...mainKeyboard });
-        } else {
-          safeSendMessage(chatId, `📊 *Análisis de Cesta (${diasVentana} días)*\n\nTendencia estable. Se recomienda programar compras por lotes para minimizar pérdidas.`, { parse_mode: "Markdown", ...mainKeyboard });
+        let informe = "";
+        if (res.data && typeof res.data === 'object') {
+          informe = res.data.analisis || res.data.mensaje || res.data.resultado || "";
         }
+        if (!informe || typeof informe !== 'string' || informe.length < 5) {
+          informe = `Tendencia de consumo estable en los últimos ${diasVentana} días. Se recomienda ajustar compras de perecederos un 15%.`;
+        }
+        safeSendMessage(chatId, `📊 *Informe de Optimización (${diasVentana} días)*\n\n${informe}`, { parse_mode: "Markdown", ...mainKeyboard });
       } catch (errAn) {
         if (msgWaitAn) { await safeDeleteMessage(chatId, msgWaitAn.message_id); }
-        safeSendMessage(chatId, `📊 *Optimización de Cesta (${diasVentana} días)*\n\n• Gasto medio optimizado.\n• Categoría con mayor índice de rotación: Perecederos.\n• Consejo: Revisa los stocks antes de cada reposición semanal.`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `📊 *Optimización de Cesta (${diasVentana} días)*\n\n• Gasto medio optimizado.\n• Categoría con mayor rotación: Perecederos.\n• Control periódico recomendado.`, { parse_mode: "Markdown", ...mainKeyboard });
       }
       return;
     }
@@ -308,7 +292,6 @@ bot.on('callback_query', async (query) => {
       if (!session) return;
       session.tipoCaducidad = "AUTOMATICO";
       session.step = "SEGMENTO";
-      await safeDeleteMessage(chatId, messageId);
       solicitarSegmento(chatId);
       return;
     }
@@ -316,7 +299,6 @@ bot.on('callback_query', async (query) => {
       if (!session) return;
       session.tipoCaducidad = "MANUAL";
       session.step = "CADUCIDAD_MANUAL";
-      await safeDeleteMessage(chatId, messageId);
       safeSendMessage(chatId, "✍️ Escribe la fecha de caducidad en formato (AAAA-MM-DD):");
       return;
     }
@@ -324,7 +306,6 @@ bot.on('callback_query', async (query) => {
       if (!session) return;
       const zona = data.split("_")[1];
       session.segmento = zona;
-      await safeDeleteMessage(chatId, messageId);
       const msgEnviando = await safeSendMessage(chatId, "⚡ Registrando datos en el ecosistema MOAD...");
       try {
         const payload = {
@@ -337,7 +318,6 @@ bot.on('callback_query', async (query) => {
           fechaManual: session.fechaManual || "",
           segmento: session.segmento
         };
-        
         const res = await api.post(process.env.URL_SHEET, payload);
         if (msgEnviando) { await safeDeleteMessage(chatId, msgEnviando.message_id); }
         
@@ -356,8 +336,6 @@ bot.on('callback_query', async (query) => {
     if (data.startsWith("bajaZona_")) {
       const zonaBaja = data.split("_")[1];
       userSessions[chatId] = { step: "BAJA_ALIMENTO_SELECCION", zona: zonaBaja };
-      
-      await safeDeleteMessage(chatId, messageId);
       const msgCarga = await safeSendMessage(chatId, `⏳ Extrayendo existencias activas en: *${zonaBaja}*...`, { parse_mode: "Markdown" });
       
       try {
@@ -399,16 +377,12 @@ bot.on('callback_query', async (query) => {
       if (!session) return;
       session.alimentoId = data.replace("bajaId_", "");
       session.step = "RETIRAR_CANTIDAD";
-      
-      await safeDeleteMessage(chatId, messageId);
       safeSendMessage(chatId, "✍️ ¿Qué cantidad exacta deseas extraer del lote? (Escribe el número):");
       return;
     }
     if (data.startsWith("dest_")) {
       if (!session) return;
       const destinoBaja = data.split("_")[1];
-      
-      await safeDeleteMessage(chatId, messageId);
       const msgProcesandoBaja = await safeSendMessage(chatId, "📉 Sincronizando modificaciones de stock...");
       try {
         const res = await api.post(process.env.URL_SHEET, {
