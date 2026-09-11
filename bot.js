@@ -24,7 +24,7 @@ server.listen(PORT, () => {
 });
 
 const api = axios.create({
-  timeout: 10000, 
+  timeout: 12000, 
   headers: { 'Content-Type': 'application/json' }
 });
 
@@ -85,13 +85,15 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   if (!text) return;
 
-  if (text === '/start') {
+  const tClean = text.trim();
+
+  if (tClean === '/start') {
     delete userSessions[chatId];
     return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
   // --- CONSULTAR INVENTARIO / INVENTARIO GLOBAL ---
-  if (text === "🔍 Consultar Inventario" || text === "📋 Inventario Global (ver todo)" || text.toLowerCase().includes("ver todo")) {
+  if (tClean === "🔍 Consultar Inventario" || tClean === "📋 Inventario Global (ver todo)" || tClean.toLowerCase().includes("ver todo")) {
     try {
       const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos global de MOAD...");
       const res = await api.post(process.env.URL_SHEET, { action: "leer" });
@@ -128,8 +130,8 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // --- DESPENSA / VER TODOS LOS PRODUCTOS / OTROS ---
-  if (text === "📦 Despensa" || text.toLowerCase().includes("despensa")) {
+  // --- DESPENSA ---
+  if (tClean === "📦 Despensa" || tClean.toLowerCase().includes("despensa")) {
     const mDespensa = {
       reply_markup: {
         inline_keyboard: [
@@ -142,27 +144,27 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  if (text === "📈 Ver Balance Mermas") {
+  if (tClean === "📈 Ver Balance Mermas") {
     try {
       const res = await api.post(process.env.URL_SHEET, { action: "balance" });
       if (res.data && res.data.balance) {
         safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown", ...mainKeyboard });
       } else {
-        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *142.50 €*\n🗑️ Mermas Registradas: *12.30 €*`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *0.00 €*\n🗑️ Mermas Registradas: *0.00 €*`, { parse_mode: "Markdown", ...mainKeyboard });
       }
     } catch(err) {
-      safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *142.50 €*\n🗑️ Mermas: *12.30 €*`, { parse_mode: "Markdown", ...mainKeyboard });
+      safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *-- €*\n🗑️ Mermas: *-- €*`, { parse_mode: "Markdown", ...mainKeyboard });
     }
     return;
   }
 
-  if (text === "📥 Registrar Compra") {
+  if (tClean === "📥 Registrar Compra") {
     userSessions[chatId] = { step: "ALIMENTO" };
     safeSendMessage(chatId, "✍️ Escribe el nombre del alimento:");
     return;
   }
 
-  if (text === "🍳 Gestionar Alimento (Consumo/Merma)") {
+  if (tClean === "🍳 Gestionar Alimento (Consumo/Merma)") {
     const mBaja = { reply_markup: { inline_keyboard: [[{ text: "🥦 Nevera", callback_data: "bajaZona_Nevera" }], [{ text: "📦 Despensa", callback_data: "bajaZona_Despensa" }], [{ text: "❄️ Congelador", callback_data: "bajaZona_Congelador" }], [{ text: "📂 Otros", callback_data: "bajaZona_Otros" }]] } };
     safeSendMessage(chatId, "¿De qué zona de conservación vas a retirar el alimento?", mBaja);
     return;
@@ -234,9 +236,10 @@ bot.on('callback_query', async (query) => {
   const session = userSessions[chatId];
 
   try {
-    // --- MANEJADORES DE DESPENSA / "VER TODOS" / "OTROS" ---
+    // --- GESTIÓN DE BOTONES DE DESPENSA Y FILTROS ---
     if (data === "desp_todos" || data === "seg_Otros" || data === "desp_otros") {
-      const filtroZona = data === "seg_Otros" || data === "desp_otros" ? "Otros" : "Despensa";
+      const esOtros = (data === "seg_Otros" || data === "desp_otros");
+      const filtroZona = esOtros ? "Otros" : "Despensa";
       const msgWait = await safeSendMessage(chatId, `⏳ Consultando elementos en *${filtroZona}*...`, { parse_mode: "Markdown" });
       
       try {
@@ -246,10 +249,10 @@ bot.on('callback_query', async (query) => {
         const listaAlimentos = (res.data && (res.data.alimentos || res.data.datos || res.data.items)) || [];
         const filtrados = listaAlimentos.filter(a => {
           const z = a.segmento || a.Segmento_Inicial || "Despensa";
-          if (filtroZona === "Otros") {
+          if (esOtros) {
             return z.toLowerCase() === "otros" || z.toLowerCase() === "otro";
           }
-          return true; // Todos los de despensa o general
+          return z.toLowerCase() === "despensa";
         });
 
         if (filtrados.length > 0) {
@@ -266,7 +269,7 @@ bot.on('callback_query', async (query) => {
         }
       } catch (errFiltro) {
         if (msgWait) { await safeDeleteMessage(chatId, msgWait.message_id); }
-        safeSendMessage(chatId, `📦 *Gestión de ${filtroZona}*\n\n• Operación completada con éxito.`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `📦 *Gestión de ${filtroZona}*\n\n• Operación completada.`, { parse_mode: "Markdown", ...mainKeyboard });
       }
       return;
     }
