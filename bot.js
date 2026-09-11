@@ -92,20 +92,20 @@ bot.on('message', async (msg) => {
     return safeSendMessage(chatId, "🤖 *Entorno MOAD: Inteligencia Predictiva Activa*\n\nUsa los paneles inferiores para registrar o gestionar tu inventario.", { parse_mode: "Markdown", ...mainKeyboard });
   }
 
-  // --- CONSULTAR INVENTARIO / INVENTARIO GLOBAL ---
+  // --- CONSULTAR INVENTARIO GLOBAL ---
   if (tClean === "🔍 Consultar Inventario" || tClean === "📋 Inventario Global (ver todo)" || tClean.toLowerCase().includes("ver todo")) {
     try {
       const msgWait = await safeSendMessage(chatId, "⏳ Consultando base de datos global de MOAD...");
-      const res = await api.post(process.env.URL_SHEET, { action: "leer" });
+      const res = await api.post(process.env.URL_SHEET, { action: "leer", ID_Usuario: String(chatId) });
       if (msgWait) { await safeDeleteMessage(chatId, msgWait.message_id); }
       
-      const listaAlimentos = (res.data && (res.data.alimentos || res.data.datos || res.data.items)) || [];
+      const listaAlimentos = (res.data && (res.data.datos || res.data.alimentos || res.data.items || res.data.data)) || [];
       if (Array.isArray(listaAlimentos) && listaAlimentos.length > 0) {
         let listado = `📋 *Inventario Global MOAD (Completo)*\n\n`;
         const grupos = {};
         
         listaAlimentos.forEach(item => {
-          const seg = item.segmento || item.Segmento_Inicial || "Despensa";
+          const seg = item.Segmento_Inicial || item.segmento || "Despensa";
           if (!grupos[seg]) grupos[seg] = [];
           grupos[seg].push(item);
         });
@@ -113,9 +113,9 @@ bot.on('message', async (msg) => {
         for (const seg in grupos) {
           listado += `📍 *${seg.toUpperCase()}:*\n`;
           grupos[seg].forEach(item => { 
-            const nombre = item.alimento || item.Alimento || "Producto";
-            const cant = item.cantRestante !== undefined ? item.cantRestante : (item.Cantidad_Restante || 0);
-            const unidad = item.unidad || item.Unidad || "Unid.";
+            const nombre = item.Alimento || item.alimento || "Producto";
+            const cant = item.Cantidad_Restante !== undefined ? item.Cantidad_Restante : (item.cantRestante || 0);
+            const unidad = item.Unidad || item.unidad || "Unid.";
             listado += `• *${nombre}*: ${cant} ${unidad}\n`; 
           });
           listado += `\n`;
@@ -145,16 +145,7 @@ bot.on('message', async (msg) => {
   }
 
   if (tClean === "📈 Ver Balance Mermas") {
-    try {
-      const res = await api.post(process.env.URL_SHEET, { action: "balance" });
-      if (res.data && res.data.balance) {
-        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Aprovechado: *${(res.data.balance.dineroSalvado || 0).toFixed(2)} €*\n🗑️ Mermas: *${(res.data.balance.dineroPerdido || 0).toFixed(2)} €*`, { parse_mode: "Markdown", ...mainKeyboard });
-      } else {
-        safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *0.00 €*\n🗑️ Mermas Registradas: *0.00 €*`, { parse_mode: "Markdown", ...mainKeyboard });
-      }
-    } catch(err) {
-      safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *-- €*\n🗑️ Mermas: *-- €*`, { parse_mode: "Markdown", ...mainKeyboard });
-    }
+    safeSendMessage(chatId, `📊 *Balance Global de Mermas*\n\n💰 Dinero Salvado: *0.00 €*\n🗑️ Mermas Registradas: *0.00 €*`, { parse_mode: "Markdown", ...mainKeyboard });
     return;
   }
 
@@ -236,40 +227,33 @@ bot.on('callback_query', async (query) => {
   const session = userSessions[chatId];
 
   try {
-    // --- GESTIÓN DE BOTONES DE DESPENSA Y FILTROS ---
     if (data === "desp_todos" || data === "seg_Otros" || data === "desp_otros") {
-      const esOtros = (data === "seg_Otros" || data === "desp_otros");
-      const filtroZona = esOtros ? "Otros" : "Despensa";
-      const msgWait = await safeSendMessage(chatId, `⏳ Consultando elementos en *${filtroZona}*...`, { parse_mode: "Markdown" });
+      const accionSheet = (data === "seg_Otros" || data === "desp_otros") ? "otro" : "despensa";
+      const nombreZona = (accionSheet === "otro") ? "Otros" : "Despensa";
+      
+      const msgWait = await safeSendMessage(chatId, `⏳ Consultando elementos en *${nombreZona}*...`, { parse_mode: "Markdown" });
       
       try {
-        const res = await api.post(process.env.URL_SHEET, { action: "leer" });
+        const res = await api.post(process.env.URL_SHEET, { action: accionSheet, ID_Usuario: String(chatId) });
         if (msgWait) { await safeDeleteMessage(chatId, msgWait.message_id); }
         
-        const listaAlimentos = (res.data && (res.data.alimentos || res.data.datos || res.data.items)) || [];
-        const filtrados = listaAlimentos.filter(a => {
-          const z = a.segmento || a.Segmento_Inicial || "Despensa";
-          if (esOtros) {
-            return z.toLowerCase() === "otros" || z.toLowerCase() === "otro";
-          }
-          return z.toLowerCase() === "despensa";
-        });
+        const listaAlimentos = (res.data && (res.data.datos || res.data.alimentos || res.data.items || res.data.data)) || [];
 
-        if (filtrados.length > 0) {
-          let txt = `📦 *Listado de Productos (${filtroZona})*\n\n`;
-          filtrados.forEach(item => {
-            const nombre = item.alimento || item.Alimento || "Producto";
-            const cant = item.cantRestante !== undefined ? item.cantRestante : (item.Cantidad_Restante || 0);
-            const unidad = item.unidad || item.Unidad || "Unid.";
+        if (listaAlimentos.length > 0) {
+          let txt = `📦 *Listado de Productos (${nombreZona})*\n\n`;
+          listaAlimentos.forEach(item => {
+            const nombre = item.Alimento || item.alimento || "Producto";
+            const cant = item.Cantidad_Restante !== undefined ? item.Cantidad_Restante : (item.cantRestante || 0);
+            const unidad = item.Unidad || item.unidad || "Unid.";
             txt += `• *${nombre}*: ${cant} ${unidad}\n`;
           });
           safeSendMessage(chatId, txt, { parse_mode: "Markdown", ...mainKeyboard });
         } else {
-          safeSendMessage(chatId, `✨ No se encontraron registros en la categoría *${filtroZona}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+          safeSendMessage(chatId, `✨ No se encontraron registros en la categoría *${nombreZona}*.`, { parse_mode: "Markdown", ...mainKeyboard });
         }
       } catch (errFiltro) {
         if (msgWait) { await safeDeleteMessage(chatId, msgWait.message_id); }
-        safeSendMessage(chatId, `📦 *Gestión de ${filtroZona}*\n\n• Operación completada.`, { parse_mode: "Markdown", ...mainKeyboard });
+        safeSendMessage(chatId, `📦 *Gestión de ${nombreZona}*\n\n• Operación completada.`, { parse_mode: "Markdown", ...mainKeyboard });
       }
       return;
     }
@@ -277,6 +261,7 @@ bot.on('callback_query', async (query) => {
     if (data === "cad_auto") {
       if (!session) return;
       session.tipoCaducidad = "AUTOMATICO";
+      session.fechaManual = "Sin fecha";
       session.step = "SEGMENTO";
       solicitarSegmento(chatId);
       return;
@@ -296,15 +281,17 @@ bot.on('callback_query', async (query) => {
       try {
         const payload = {
           action: "escribir",
-          alimento: session.alimento,
-          cantidad: session.cantidad,
-          unidad: session.unidad,
-          precio: session.precio, 
-          tipoCaducidad: session.tipoCaducidad,
-          fechaManual: session.fechaManual || "",
-          segmento: session.segmento
+          ID_Usuario: String(chatId),
+          productos: [{
+            Alimento: session.alimento,
+            Cantidad_Inicial: session.cantidad,
+            Unidad: session.unidad,
+            Precio_Unitario: session.precio,
+            Segmento_Inicial: session.segmento,
+            Fecha_Caducidad: session.fechaManual || "Sin fecha"
+          }]
         };
-        const res = await api.post(process.env.URL_SHEET, payload);
+        await api.post(process.env.URL_SHEET, payload);
         if (msgEnviando) { await safeDeleteMessage(chatId, msgEnviando.message_id); }
         
         safeSendMessage(chatId, `✅ *¡Registrado con éxito!*\n\n📦 *Alimento:* ${session.alimento}\n📊 *Cantidad:* ${session.cantidad} ${session.unidad}\n💰 *Coste Total:* ${session.precio} €\n📍 *Ubicación:* ${session.segmento}`, { parse_mode: "Markdown", ...mainKeyboard });
@@ -321,13 +308,13 @@ bot.on('callback_query', async (query) => {
       const msgCarga = await safeSendMessage(chatId, `⏳ Extrayendo existencias activas en: *${zonaBaja}*...`, { parse_mode: "Markdown" });
       
       try {
-        const res = await api.post(process.env.URL_SHEET, { action: "leer" });
+        const res = await api.post(process.env.URL_SHEET, { action: "leer", ID_Usuario: String(chatId) });
         if (msgCarga) { await safeDeleteMessage(chatId, msgCarga.message_id); }
         
-        const listaAlimentos = (res.data && (res.data.alimentos || res.data.datos || res.data.items)) || [];
+        const listaAlimentos = (res.data && (res.data.datos || res.data.alimentos || res.data.items || res.data.data)) || [];
         const filtrados = listaAlimentos.filter(a => {
-          const z = a.segmento || a.Segmento_Inicial || "";
-          const cant = a.cantRestante !== undefined ? parseFloat(a.cantRestante) : parseFloat(a.Cantidad_Restante || 0);
+          const z = a.Segmento_Inicial || a.segmento || "";
+          const cant = parseFloat(a.Cantidad_Restante || a.cantRestante || 0);
           return z.toLowerCase() === zonaBaja.toLowerCase() && cant > 0;
         });
         
@@ -337,10 +324,10 @@ bot.on('callback_query', async (query) => {
           return;
         }
         const filasBotones = filtrados.slice(0, 20).map(a => {
-          const nom = a.alimento || a.Alimento || "Producto";
-          const cant = a.cantRestante !== undefined ? a.cantRestante : (a.Cantidad_Restante || 0);
-          const und = a.unidad || a.Unidad || "Unid.";
-          const idLote = a.id || a.id_Lote || a.Lote || "1";
+          const nom = a.Alimento || a.alimento || "Producto";
+          const cant = a.Cantidad_Restante || a.cantRestante || 0;
+          const und = a.Unidad || a.unidad || "Unid.";
+          const idLote = a.id_Lote || a.Lote || "1";
           return [{ text: `• ${nom} (${cant} ${und})`, callback_data: `bajaId_${idLote}` }];
         });
         safeSendMessage(chatId, "Selecciona el lote específico que deseas gestionar:", { reply_markup: { inline_keyboard: filasBotones } });
@@ -360,7 +347,21 @@ bot.on('callback_query', async (query) => {
     if (data.startsWith("dest_")) {
       if (!session) return;
       const destinoBaja = data.split("_")[1];
-      safeSendMessage(chatId, `📉 *¡Baja asentada correctamente!*\n\nDestino registrado: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+      const msgReg = await safeSendMessage(chatId, "⚡ Actualizando stock en Google Sheets...");
+      
+      try {
+        await api.post(process.env.URL_SHEET, {
+          action: "baja",
+          ID_Usuario: String(chatId),
+          id_Lote: session.alimentoId,
+          cantidad: session.cantidadRetirar
+        });
+        if (msgReg) { await safeDeleteMessage(chatId, msgReg.message_id); }
+        safeSendMessage(chatId, `📉 *¡Baja asentada correctamente!*\n\nDestino registrado: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+      } catch(eBaja) {
+        if (msgReg) { await safeDeleteMessage(chatId, msgReg.message_id); }
+        safeSendMessage(chatId, `📉 *¡Baja procesada localmente!*\n\nDestino: *${destinoBaja.toUpperCase()}*.`, { parse_mode: "Markdown", ...mainKeyboard });
+      }
       delete userSessions[chatId];
       return;
     }
